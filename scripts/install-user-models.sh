@@ -1,39 +1,66 @@
 #!/usr/bin/env bash
-# Install Ollama model entries into ~/.grok/config.toml (Grok requirement).
+# Install/update Ollama model entries in ~/.grok/config.toml (Grok requirement).
 # Project .grok/config.toml cannot define [model.*] — only MCP/plugins/permissions.
 set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib-env.sh"
 
 CFG="${GROK_CONFIG:-$HOME/.grok/config.toml}"
 mkdir -p "$(dirname "$CFG")"
 touch "$CFG"
 
-if grep -q '\[model\.ollama-admin\]' "$CFG" 2>/dev/null; then
-  echo "ollama-admin model already present in $CFG"
-  exit 0
-fi
+python3 - "$CFG" "$OLLAMA_OPENAI_BASE" "$OLLAMA_ADMIN_MODEL" "$OLLAMA_FAST_MODEL" <<'PY'
+import re
+import sys
+from pathlib import Path
 
-cat >> "$CFG" << 'EOF'
+cfg_path = Path(sys.argv[1])
+base = sys.argv[2]
+admin_model = sys.argv[3]
+fast_model = sys.argv[4]
+text = cfg_path.read_text(encoding="utf-8") if cfg_path.exists() else ""
 
-# --- linux-admin local Ollama models (install-user-models.sh) ---
+# Remove previous managed block if present
+text = re.sub(
+    r"\n?# --- linux-admin .*?models.*?---\n.*?# --- end linux-admin models ---\n?",
+    "\n",
+    text,
+    flags=re.S,
+)
+# Also strip standalone ollama-admin/fast sections we may have written earlier
+for name in ("ollama-admin", "ollama-fast"):
+    text = re.sub(
+        rf"\n?\[model\.{re.escape(name)}\]\n(?:[^\[]*\n)*",
+        "\n",
+        text,
+    )
+
+block = f"""
+# --- linux-admin Ollama models (install-user-models.sh) ---
 [model.ollama-admin]
-model = "llama3.2:3b"
-base_url = "http://127.0.0.1:11434/v1"
+model = "{admin_model}"
+base_url = "{base}"
 name = "Ollama Admin"
 api_backend = "chat_completions"
-context_window = 16384
+context_window = 32768
 temperature = 0.2
-max_completion_tokens = 4096
+max_completion_tokens = 8192
 
 [model.ollama-fast]
-model = "llama3.2:3b"
-base_url = "http://127.0.0.1:11434/v1"
+model = "{fast_model}"
+base_url = "{base}"
 name = "Ollama Fast"
 api_backend = "chat_completions"
-context_window = 8192
+context_window = 16384
 temperature = 0.3
-max_completion_tokens = 2048
+max_completion_tokens = 4096
 # --- end linux-admin models ---
-EOF
-
-echo "installed ollama-admin + ollama-fast into $CFG"
-echo "Note: Grok project config only carries MCP; models must live in user config."
+"""
+text = text.rstrip() + "\n" + block
+cfg_path.write_text(text, encoding="utf-8")
+print(f"wrote ollama-admin ({admin_model}) + ollama-fast ({fast_model})")
+print(f"  base_url = {base}")
+print(f"  config   = {cfg_path}")
+PY

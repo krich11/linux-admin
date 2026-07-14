@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-# Bootstrap (may use network once): venv, package install, optional ollama model.
+# Bootstrap: venv + Grok model registration. Does NOT install a local Ollama
+# when a remote/LAN endpoint is configured (default: config/ollama.env).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export PATH="${HOME}/.local/bin:${PATH}"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib-env.sh"
 
 echo "== linux-admin bootstrap =="
+echo "ollama endpoint: $OLLAMA_BASE_URL"
+echo "admin model:     $OLLAMA_ADMIN_MODEL"
 
-# uv
 if ! command -v uv >/dev/null 2>&1; then
   echo "installing uv..."
   curl -LsSf https://astral.sh/uv/install.sh | sh
   export PATH="${HOME}/.local/bin:${PATH}"
 fi
 
-# Python MCP package
 echo "syncing linux-admin-mcp venv..."
 cd "$ROOT/mcp/linux_admin"
 uv venv --python 3.12 .venv 2>/dev/null || uv venv .venv
@@ -24,44 +27,26 @@ source .venv/bin/activate
 uv pip install -e ".[dev]"
 cd "$ROOT"
 
-# Ollama
-if ! command -v ollama >/dev/null 2>&1; then
-  echo "installing ollama..."
-  curl -fsSL https://ollama.com/install.sh | sh
-fi
-
-if ! curl -sS --max-time 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
-  echo "starting ollama serve..."
-  nohup ollama serve >/tmp/ollama-serve.log 2>&1 &
-  sleep 3
-fi
-
-# Default small model for reliability; override with LINUX_ADMIN_PULL_MODEL
-PULL_MODEL="${LINUX_ADMIN_PULL_MODEL:-llama3.2:3b}"
-if curl -sS --max-time 2 http://127.0.0.1:11434/api/tags | grep -q "$PULL_MODEL"; then
-  echo "model already present: $PULL_MODEL"
+if curl -sS --max-time 5 "${OLLAMA_BASE_URL}/api/tags" >/tmp/linux-admin-bootstrap-tags.json 2>/dev/null; then
+  echo "ollama reachable at ${OLLAMA_BASE_URL}"
+  if ! python3 -c "import json,sys; d=json.load(open('/tmp/linux-admin-bootstrap-tags.json')); names={m.get('name') for m in d.get('models',[])}; sys.exit(0 if '${OLLAMA_ADMIN_MODEL}' in names else 1)"; then
+    echo "WARNING: ${OLLAMA_ADMIN_MODEL} not on remote server. Available sample:"
+    python3 -c 'import json; d=json.load(open("/tmp/linux-admin-bootstrap-tags.json")); print("\n".join(m["name"] for m in d.get("models",[])[:20]))'
+    echo "Edit config/ollama.env or pull the model on the Ollama host."
+  fi
 else
-  echo "pulling model: $PULL_MODEL"
-  ollama pull "$PULL_MODEL"
+  echo "WARNING: cannot reach ${OLLAMA_BASE_URL} — fix network/Ollama host before using the agent."
 fi
 
-# Grok only loads custom models from ~/.grok/config.toml (not project .grok).
-# MCP servers still come from project .grok/config.toml.
 "$ROOT/scripts/install-user-models.sh"
 
-# Init creds metadata (no password)
 if command -v linux-admin-creds >/dev/null 2>&1; then
   linux-admin-creds init --policy auto --backend file || true
 fi
 
-# Symlink convenience
 mkdir -p "${HOME}/.local/bin"
 ln -sfn "$ROOT/scripts/linux-admin" "${HOME}/.local/bin/linux-admin"
-chmod +x "$ROOT/scripts/linux-admin" \
-  "$ROOT/scripts/doctor.sh" \
-  "$ROOT/scripts/doctor-offline.sh" \
-  "$ROOT/scripts/bootstrap.sh" \
-  "$ROOT/scripts/linux-admin-askpass" 2>/dev/null || true
+chmod +x "$ROOT/scripts/"*.sh "$ROOT/scripts/linux-admin" "$ROOT/scripts/linux-admin-askpass" 2>/dev/null || true
 
 echo
 echo "bootstrap complete."

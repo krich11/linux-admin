@@ -3,7 +3,7 @@
 **Local-first** Linux administration agent with a **Grok-style CLI**.
 
 - **UI:** `linux-admin` → Grok TUI (scrollback, prompt, tools, approvals)
-- **LLM:** Ollama on `127.0.0.1:11434` (default model `llama3.2:3b`)
+- **LLM:** LAN Ollama at `http://192.168.200.120:11434` (default `qwen2.5-coder:7b`; see `config/ollama.env`)
 - **Tools:** `linux-admin-mcp` (systemd, journal, disk, network, packages, …)
 - **Creds / sudo:** per-host store + adaptive elevation (NOPASSWD, askpass, TTY, manual)
 - **Offline core path:** full local admin without WAN; optional online helpers must not block

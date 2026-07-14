@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# Assert CORE path does not require WAN. Optional online tools may be absent.
+# Assert CORE path does not require public internet.
+# LAN Ollama (config/ollama.env) is part of the intended core path.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${HOME}/.local/bin:${PATH}"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib-env.sh"
 
 echo "== linux-admin doctor-offline (core path) =="
+echo "ollama (LAN OK): $OLLAMA_BASE_URL"
 
-# 1) Standard doctor (local components)
 "$ROOT/scripts/doctor.sh"
 
-# 2) Ensure MCP config does not use live npx -y / uvx registry installs for core servers
-# Ignore comments; flag actual command/args lines only.
 if grep -R --include='config.toml' -E '^\s*(command|args)\s*=' "$ROOT/.grok" 2>/dev/null \
   | grep -E 'npx|uvx' \
   | grep -vE '^\s*#' ; then
-  # Further require -y or bare uvx install pattern
   if grep -R --include='config.toml' -E 'npx[^\n]*-y|command\s*=\s*"uvx"|command\s*=\s*\x27uvx\x27' "$ROOT/.grok" 2>/dev/null \
     | grep -vE '^\s*#|/#|comment' ; then
     echo "  [FAIL] project config appears to use runtime registry installers (npx -y / uvx)"
@@ -25,14 +25,16 @@ if grep -R --include='config.toml' -E '^\s*(command|args)\s*=' "$ROOT/.grok" 2>/
 fi
 echo "  [OK]  no npx -y / uvx runtime installers in project MCP commands"
 
-# 3) Ollama is loopback
-if grep -E 'base_url\s*=' "$ROOT/.grok/config.toml" | grep -v '127.0.0.1' | grep -v 'localhost' | grep -v '^#' ; then
-  echo "  [WARN] non-loopback base_url found — ensure core default stays local"
+if grep -A6 '\[model\.ollama-admin\]' "${HOME}/.grok/config.toml" 2>/dev/null | grep -q 'base_url'; then
+  if grep -A6 '\[model\.ollama-admin\]' "${HOME}/.grok/config.toml" | grep -E 'openai\.com|api\.x\.ai|anthropic\.com'; then
+    echo "  [FAIL] ollama-admin base_url looks like a public cloud API"
+    exit 1
+  fi
+  echo "  [OK]  model base_url is not a public cloud LLM API"
 else
-  echo "  [OK]  model base_url points at loopback"
+  echo "  [WARN] could not inspect ollama-admin base_url"
 fi
 
-# 4) Core tools work without invoking network binaries
 "$ROOT/mcp/linux_admin/.venv/bin/python" - <<'PY'
 from linux_admin_mcp.executil import ALLOWED_BINARIES, DENIED_BINARIES, resolve_binary
 assert "curl" in DENIED_BINARIES
@@ -46,22 +48,18 @@ assert ip_addr()["returncode"] == 0
 print("  [OK]  allowlist + local probes")
 PY
 
-# 5) Optional: brief Ollama completion if models present
-if curl -sS --max-time 2 http://127.0.0.1:11434/api/tags >/tmp/oa.json 2>/dev/null; then
-  if python3 -c 'import json; d=json.load(open("/tmp/oa.json")); exit(0 if d.get("models") else 1)'; then
-    if curl -sS --max-time 120 http://127.0.0.1:11434/api/generate \
-      -d '{"model":"llama3.2:3b","prompt":"Reply with exactly: pong","stream":false}' \
-      2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("response","")[:80])' \
-      | grep -qi pong; then
-      echo "  [OK]  ollama local generate (llama3.2:3b)"
-    else
-      # try whatever first model is
-      MODEL=$(python3 -c 'import json; d=json.load(open("/tmp/oa.json")); print(d["models"][0]["name"])')
-      echo "  [WARN] llama3.2:3b pong skip; first model is $MODEL (still local)"
-    fi
+# Remote/LAN Ollama generate smoke
+if curl -sS --max-time 5 "${OLLAMA_BASE_URL}/api/tags" >/tmp/oa.json 2>/dev/null; then
+  if curl -sS --max-time 120 "${OLLAMA_BASE_URL}/api/generate" \
+    -d "{\"model\":\"${OLLAMA_ADMIN_MODEL}\",\"prompt\":\"Reply with exactly: pong\",\"stream\":false}" \
+    2>/dev/null | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("response","")[:120])' \
+    | grep -qi pong; then
+    echo "  [OK]  ollama generate via ${OLLAMA_BASE_URL} (${OLLAMA_ADMIN_MODEL})"
+  else
+    echo "  [WARN] generate smoke inconclusive for ${OLLAMA_ADMIN_MODEL} (server reachable)"
   fi
 fi
 
 echo
-echo "doctor-offline: PASS (core path)"
+echo "doctor-offline: PASS (core path; LAN Ollama allowed)"
 exit 0

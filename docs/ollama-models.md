@@ -1,27 +1,42 @@
 # Ollama models
 
-Default model weights: **`llama3.2:3b`** (small, reliable bootstrap default).  
-Grok model ids: **`ollama-admin`**, **`ollama-fast`**.
+Inference is on the **LAN Ollama host**, not a private model repo inside this git project.
+
+## Endpoint (this deployment)
+
+| Setting | Default |
+|---------|---------|
+| Server | `http://192.168.200.120:11434` |
+| Config file | `config/ollama.env` |
+| Admin weights | `qwen2.5-coder:7b` |
+| Fast weights | `llama3.2:3b` |
+| Grok model ids | `ollama-admin`, `ollama-fast` |
+
+Override:
+
+```bash
+export OLLAMA_BASE_URL=http://192.168.200.120:11434
+export OLLAMA_ADMIN_MODEL=qwen2.5-coder:14b-base-q4_0
+./scripts/install-user-models.sh
+```
 
 ## Grok config caveat
 
-Grok loads **`[model.*]` only from `~/.grok/config.toml`**, not from project `.grok/config.toml`.  
-Project config wires **MCP** only. Bootstrap runs `scripts/install-user-models.sh` to register models in the user config. The `linux-admin` launcher always starts with `-m ollama-admin`.
+Grok loads **`[model.*]` only from `~/.grok/config.toml`**. Project `.grok/config.toml` wires **MCP** only.
 
 ```bash
-ollama serve   # if not already running
-ollama pull llama3.2:3b
-./scripts/install-user-models.sh
-ollama list
-grok models    # should list ollama-admin
+./scripts/install-user-models.sh   # writes base_url + model tags into user config
+curl -s http://192.168.200.120:11434/api/tags | head
+grok models                        # should list ollama-admin
 ```
 
-Upgrade when hardware allows (edit **user** `~/.grok/config.toml` model sections, and pull weights):
+Models are pulled and stored **on the Ollama server** (`192.168.200.120`), not in this repository.
 
-| Weights | Grok id | Use |
-|---------|---------|-----|
-| `llama3.2:3b` | `ollama-admin` | Default / low VRAM |
-| `qwen2.5-coder:7b` / `14b` | (custom) | Stronger tool use |
-| `llama3.1:8b` | (custom) | General admin |
+## Suggested tags (already on the remote library)
 
-Always pull **before** going offline. Inference is loopback only: `http://127.0.0.1:11434/v1`.
+| Role | Tag |
+|------|-----|
+| Admin / tools (default) | `qwen2.5-coder:7b` |
+| Stronger coding | `qwen2.5-coder:14b-base-q4_0`, `qwen2.5:14b` |
+| General | `llama3.1:8b`, `hermes3:8b` |
+| Small / fast | `llama3.2:3b`, `qwen2.5:3b` |

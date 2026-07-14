@@ -6,17 +6,19 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${HOME}/.local/bin:${PATH}"
+# shellcheck source=/dev/null
+source "$ROOT/scripts/lib-env.sh" 2>/dev/null || true
 
 # Default model id (registered in ~/.grok/config.toml by install-user-models.sh)
 MODEL="${LINUX_ADMIN_MODEL:-ollama-admin}"
 
-# Best-effort: ensure user model entries exist (no-op if already present)
+# Best-effort: ensure user model entries match config/ollama.env
 if [[ -x "$ROOT/scripts/install-user-models.sh" ]]; then
   "$ROOT/scripts/install-user-models.sh" >/dev/null 2>&1 || true
 fi
 
 usage() {
-  cat <<'EOF'
+  cat <<EOF
 linux-admin — local Linux admin agent (Grok-style CLI)
 
 Usage:
@@ -24,14 +26,15 @@ Usage:
   linux-admin -p "prompt"     Headless one-shot (also: --print)
   linux-admin creds ...       Credential repository CLI
   linux-admin doctor          Core path health checks
-  linux-admin doctor-offline  Offline core-path checks
-  linux-admin bootstrap       Install deps / vendor / optional model pull
+  linux-admin doctor-offline  Core-path checks (LAN Ollama OK; no public cloud LLM)
+  linux-admin bootstrap       Install deps + register Grok↔Ollama models
   linux-admin mcp             Run linux-admin-mcp on stdio (debug)
   linux-admin help            This help
 
-Environment:
+Environment / config/ollama.env:
+  OLLAMA_BASE_URL     Ollama API root (default: http://192.168.200.120:11434)
+  OLLAMA_ADMIN_MODEL  Weight tag on that server (default: qwen2.5-coder:7b)
   LINUX_ADMIN_MODEL   Grok model id (default: ollama-admin)
-  OLLAMA_HOST         Ollama base (default: 127.0.0.1:11434)
 EOF
 }
 
@@ -63,14 +66,12 @@ case "$cmd" in
       exit 2
     fi
     prompt="$*"
-    # Prefer local path: disable built-in web tools so offline isn't blocked by search.
     exec grok -m "$MODEL" --disable-web-search -p "$prompt"
     ;;
   "")
     exec grok -m "$MODEL" --disable-web-search
     ;;
   *)
-    # Pass through extra grok flags; still pin model + local-first defaults
     exec grok -m "$MODEL" --disable-web-search "$@"
     ;;
 esac
