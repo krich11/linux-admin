@@ -1,35 +1,43 @@
 # linux-admin
 
-**Fully local** Linux administration agent:
+**Local-first** Linux administration agent:
 
 - **Grok CLI** as the agent host (tools, permissions, sessions, ACP)
-- **Ollama only** for LLM inference (`http://127.0.0.1:11434/v1`)
+- **Ollama** for required LLM inference (`http://127.0.0.1:11434/v1`)
 - **Local MCP servers** launched from vendored / lockfile-installed binaries on disk
 - **Per-host credential repository** (OS keyring or encrypted local store — never git)
 - **Adaptive sudo** for hosts that need a password, NOPASSWD, a cached ticket, a TTY prompt, or a manual handoff
+- **Optional online helpers** (search, docs fetch, etc.) when the network is up — never required for local admin
 
-## Offline requirement
+## Offline / air-gap contract
 
-This project must run at **full capacity with no internet**. Software may be downloaded during bootstrap (Ollama, model weights, apt packages, locked npm/uv deps). After that, inference, tools, skills, and MCP must not depend on WAN reachability.
+**Core path must work at full local capacity with no internet** after bootstrap: Ollama, credentials, sudo, skills, and admin tools.
 
-There is **no cloud LLM fallback** in the project profile.
+Some resources are inherently online-only (internet search, remote CVE/docs, upstream mirrors). Those are fine as **optional enrichment**. They must:
 
-Details: **[PLAN.md](./PLAN.md)** (§1.1 Offline-first constraint, §6 credentials & sudo).
+- fail fast and clearly when unreachable  
+- not block session start  
+- not be required steps in core admin skills  
+
+There is **no cloud LLM requirement** for this project’s default profile.
+
+Details: **[PLAN.md](./PLAN.md)** (§1.1, §6).
 
 ## Status
 
-Planning. Architecture, MCP inventory, offline contract, and PR breakdown are in `PLAN.md`.
+Planning. Architecture, MCP inventory, offline contract, credentials/sudo, and PR breakdown are in `PLAN.md`.
 
 ## Intent
 
 ```
-You → Grok (this repo) → Ollama (loopback, local weights)
-                       → MCP (stdio, vendored entrypoints)
-                       → credential store (per machine-id, local only)
-                       → sudo runner (nopasswd | askpass | tty | manual)
+You → Grok (this repo) → Ollama (loopback, local weights)     [CORE]
+                       → MCP admin tools (vendored)           [CORE]
+                       → credential store + sudo runner       [CORE]
                        → Ubuntu host (inspect → plan → apply → verify)
 
-No required path: public internet, cloud APIs, npx -y, live registries
+                    ↘ optional: search / fetch / remotes      [ONLINE]
+                      (enrichment only; soft-fail offline)
+
 Secrets never go to the LLM or to git
 ```
 
@@ -43,7 +51,7 @@ Secrets never go to the LLM or to git
 ## Repository
 
 GitHub: [krich11/linux-admin](https://github.com/krich11/linux-admin)  
-(GitHub is for source distribution only — not a runtime dependency.)
+(GitHub is for source distribution only — not a runtime dependency of the core path.)
 
 ## License
 

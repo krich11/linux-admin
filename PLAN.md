@@ -6,37 +6,69 @@
 **Agent harness:** Grok CLI / ACP (local process only)  
 **LLM backend:** Ollama only (`http://127.0.0.1:11434/v1`)  
 **Repo:** `krich11/linux-admin`  
-**Hard constraint:** **100% offline-capable at runtime** (see §1.1)
+**Hard constraint:** **Core admin path is 100% offline-capable** (see §1.1). Optional online helpers are allowed if they never block that path.
 
 ---
 
 ## 1. Goals
 
-Build a **fully local Linux administration agent** that:
+Build a **local-first Linux administration agent** that:
 
-1. **Operates at full capacity with no internet reachability.** Inference, tools, docs, skills, and MCP servers must not call the public network at runtime.
-2. Uses **Ollama only** for LLM inference (no cloud model fallback in this project’s default profile).
+1. **Runs at full local capacity with no internet.** Core inference, elevation, credentials, skills, and admin MCP tools must work with the WAN down.
+2. Uses **Ollama** as the **required** inference backend for this project (no cloud model required for the agent to work).
 3. Exposes safe, scoped **local MCP servers** for filesystem, process/service control, packages, logs, network diagnostics, containers, and git — all launched from **pre-installed, vendored, or lockfile-resolved** binaries on disk.
 4. Encodes admin workflow knowledge as **project rules + skills** (shipped in-repo) so the agent prefers inspect → plan → apply → verify over blind shell.
 5. Defaults to **least privilege** and explicit confirmation for destructive actions.
 6. Maintains a **per-host credential repository** (local, never git) and **flexible sudo elevation** that works whether the host requires a password, uses NOPASSWD, has a valid sudo timestamp, or needs a human at a TTY.
+7. May offer **optional online enrichment** (web search, CVE lookup, docs fetch, etc.) when the network is available — without making those services necessary for startup or for local admin work.
 
-### 1.1 Offline-first constraint (non-negotiable)
+### 1.1 Offline-first constraint (non-negotiable for the core path)
 
-| Allowed | Not allowed at runtime |
-|---------|------------------------|
-| Install software from the internet **during bootstrap / provisioning** (Ollama, models, apt packages, pip/uv deps, MCP packages) | Any **required** call to the public internet for the agent to function |
-| Local loopback (`127.0.0.1`) to Ollama and local services | Cloud LLM APIs (xAI, OpenAI, Anthropic, etc.) as default or fallback |
-| LAN admin of **this host** (loopback, local sockets, optional local Docker API) | `npx -y` / `uvx` cold installs that hit registries on every session start |
-| Using OS tools that *may* fail offline when the **task itself** needs the net (e.g. `apt update` with remote mirrors) | Agent features that **depend** on net success (CVE fetch, web search, remote MCP, telemetry) |
-| Shipping man pages, skill docs, and runbooks **in the repo** | “Look it up online” as a primary skill step |
+**Intent (clarified):** Air-gapped / offline operation must deliver full **local admin** capability. It is expected that some resources are simply not available offline (internet search, remote CVE databases, upstream package mirrors, cloud APIs). Those features are fine to ship as **optional enhancements**. They must **fail soft** and must **not interfere** with fully local operation.
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  CORE PATH (must work with WAN down)                        │
+│  Ollama · vendored local MCP · creds · sudo · skills/docs   │
+│  diagnose / stage / apply / verify on this host             │
+└─────────────────────────────────────────────────────────────┘
+        ▲ must never depend on ▼
+┌─────────────────────────────────────────────────────────────┐
+│  OPTIONAL ONLINE LAYER (nice-to-have when reachable)        │
+│  web search · CVE/docs fetch · remote MCP · git push/fetch  │
+│  apt against remote mirrors · image pulls · etc.            │
+│  → timeout fast · clear "unavailable offline" · continue    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+#### Rules
+
+| Rule | Meaning |
+|------|---------|
+| **No required WAN** | Nothing on the core path may *require* public internet success to start, load tools, run inference, elevate, or complete local admin workflows. |
+| **Optional is optional** | Online-only tools/MCP servers may exist; they are disabled by default in the strict offline profile, or enabled but treated as best-effort. |
+| **Fail soft** | If search/fetch/mirror/remote MCP is down or unreachable: return a structured “unavailable” result, do not hang, do not crash the agent, do not block other tools. |
+| **Skills stay local-first** | Core skill steps use local state and in-repo runbooks. Online lookup may be an *extra* step (“if network available, optionally…”), never a required step for success criteria. |
+| **Startup isolation** | Session start must not block on optional MCP that needs the network (`npx -y`, remote HTTP MCP health, model pull, etc.). Core MCP is vendored/local. |
+| **Inference** | Default model is Ollama on loopback. Cloud models may exist in a *separate* personal Grok config; they must not be required by this project’s default profile. |
+
+| Core (offline OK) | Optional online (may be absent) |
+|-------------------|----------------------------------|
+| Ollama inference from local weights | Web search, CVE/advisory lookup |
+| Vendored filesystem / git / memory / `linux-admin-mcp` | HTTP `fetch` MCP, remote docs portals |
+| Per-host credentials + adaptive sudo | Cloud secret managers |
+| In-repo skills + local man pages | “Search the web for this error” |
+| Local dpkg/apt cache, journal, systemd | `apt update` against remote mirrors |
+| Local Docker socket inspect (no pull) | `docker pull`, registry auth |
+| Bootstrap once while online | Runtime registry installs (`npx -y`, live `uvx`) |
 
 **Definition of done for offline:** With the host’s default route removed or WAN unplugged, after bootstrap has already completed:
 
 1. Ollama serves the configured model(s) from local disk.
-2. Grok starts with **only** project Ollama model(s) and **only** local MCP servers.
-3. Full diagnose / stage / apply / verify loops work for local admin tasks (services, journals, disks, local networking, local package cache operations).
-4. `scripts/doctor.sh` and `scripts/doctor-offline.sh` both pass.
+2. Grok starts and can use core local MCP without waiting on online services.
+3. Full diagnose / stage / apply / verify loops work for **local** admin tasks (services, journals, disks, local networking, local package DB / cache operations).
+4. Optional online tools, if configured, either are not loaded or fail quickly with a clear error — they do not break the session.
+5. `scripts/doctor.sh` and `scripts/doctor-offline.sh` both pass (**doctor-offline asserts the core path only**).
 
 **Bootstrap vs runtime**
 
@@ -46,16 +78,17 @@ Build a **fully local Linux administration agent** that:
  uv sync / npm ci into vendor  →   node/python entrypoints from vendor/
  apt install host packages     →   systemctl, journalctl, dpkg, …
  clone/pull this repo          →   AGENTS.md, skills/, docs/ on disk
+ optional: configure search MCP →  used only when WAN up; ignored offline
 ```
 
 ### Non-goals (v1)
 
 - Multi-host orchestration / fleet management (Ansible replacement). Per-host credential *stores* are local to each machine; there is no central secret server in v1.
 - Unattended root automation across the network.
-- Cloud or hybrid LLM routing (explicitly out of scope for this project profile).
+- Requiring cloud LLM inference for this project’s default profile.
 - Building a full custom agent runtime from scratch (reuse Grok as the tool-using agent host **in offline mode**).
-- Live web/CVE/documentation fetch as part of core workflows.
-- Depending on GitHub, npm registry, PyPI, or model hubs after first setup.
+- Making online-only features (search, CVE, etc.) **mandatory** for admin workflows.
+- Depending on GitHub, npm registry, PyPI, or model hubs **after first setup** for the core path.
 - Putting sudo passwords, API tokens, or private keys in the git repository or in LLM prompts/logs.
 
 ---
@@ -70,34 +103,32 @@ Build a **fully local Linux administration agent** that:
                              │ prompts / approvals
 ┌────────────────────────────▼─────────────────────────────────────┐
 │  Grok agent (this repo as cwd)                                   │
-│  • default model = ollama-* only (no cloud model id)             │
+│  • default model = ollama-* (required core path)                 │
 │  • AGENTS.md / .grok project config                              │
-│  • Skills + in-repo runbooks (no web fetch)                      │
+│  • Skills + in-repo runbooks (local-first; online optional)      │
 │  • Permission policy (read-heavy; write gated)                   │
-│  • No user MCP servers that require WAN (exclude playwright CDN, │
-│    remote HTTP MCP, GitHub-cloud, etc. from project profile)     │
+│  • Core MCP always local; optional online MCP never blocks start │
 └───────┬───────────────────────────────┬──────────────────────────┘
-        │ loopback only                 │ stdio only (local procs)
+        │ loopback (core)               │ stdio (core local MCP)
         ▼                               ▼
 ┌───────────────────┐     ┌────────────────────────────────────────┐
-│ Ollama            │     │ Local MCP servers (vendored entrypts)  │
+│ Ollama (required) │     │ CORE MCP (vendored; offline OK)        │
 │ 127.0.0.1:11434   │     │  filesystem | git | memory             │
 │ weights on disk   │     │  linux-admin (systemd/journal/…)       │
-│ no model pull at  │     │  docker* (local socket only)           │
-│ runtime           │     │  *optional; no registry pulls          │
-└───────────────────┘     └───────────────┬────────────────────────┘
-                                          │ elevate via sudo policy
-                    ┌─────────────────────▼────────────────────────┐
-                    │ Per-host credential repository (local only)  │
-                    │  ~/.local/share/linux-admin/ creds/          │
-                    │  or OS keyring (secret-service / kwallet)    │
-                    │  never git; never sent to the LLM            │
-                    └─────────────────────┬────────────────────────┘
-                                          ▼
+└───────────────────┘     │  docker* local socket (no pull req.)   │
+                          └───────────────┬────────────────────────┘
+        ┌─────────────────────────────────┤
+        │ optional, fail-soft             │ elevate via sudo policy
+        ▼                                 ▼
+┌───────────────────┐     ┌────────────────────────────────────────┐
+│ ONLINE MCP/tools  │     │ Per-host credential repository         │
+│ search, fetch, …  │     │  XDG / keyring — never git / LLM       │
+│ (WAN if present)  │     └─────────────────────┬──────────────────┘
+└───────────────────┘                           ▼
                       Host OS (Ubuntu 24.04)
                       systemctl, apt/dpkg, journalctl, ip, ss, …
                       sudo (NOPASSWD | password | cached ticket)
-                      (no agent-initiated egress required)
+                      core path: no egress required
 ```
 
 ### Why Grok + Ollama + MCP (under offline constraint)
@@ -107,20 +138,21 @@ Build a **fully local Linux administration agent** that:
 | Agent host | Grok CLI **with project model override** | Local process; must be configured so sessions never call xAI for this repo |
 | Models | Ollama on loopback | Weights and inference stay on host; Grok custom `base_url` |
 | Tools | Local stdio MCP from **vendor/** or locked venv | No registry hits at startup; portable tool boundary |
-| Knowledge | In-repo skills + docs | No web dependency for procedures |
+| Knowledge | In-repo skills + docs first | Online search/docs optional enrichment only |
 | Policy | Project rules + permission modes | High blast radius; conservative defaults |
 | Secrets | Per-host credential repo (XDG / keyring) | Offline, machine-scoped; not in git or model context |
 | Elevation | Adaptive sudo (see §6) | Hosts differ: password, NOPASSWD, ticket, or human TTY |
+| Online extras | Optional MCP/tools, fail soft | Must not gate core path or doctor-offline |
 
-### Grok offline checklist
+### Grok core-path checklist
 
 Project config must ensure:
 
-1. `[models] default` is an Ollama model id only.
-2. Every `[model.*]` used by this project points at `http://127.0.0.1:11434/v1` (not cloud).
-3. No `fork_secondary_model` / secondary paths that resolve to cloud models for this workspace.
-4. Project MCP set is a **closed allowlist** — do not inherit WAN-bound user MCP servers (e.g. Playwright pulling browsers, remote GitHub MCP) into the admin profile.
-5. If Grok itself phones home for auth/telemetry, document it; prefer modes that work with local models without live xAI session **if the CLI supports that**. Validate during Phase 1; if a signed-in cloud session is required just to start the binary, treat that as a **blocker** and either configure offline/local-only mode or re-evaluate the harness.
+1. `[models] default` is an Ollama model id (core path does not need cloud inference).
+2. Core `[model.*]` entries used by default point at `http://127.0.0.1:11434/v1`.
+3. No secondary/fallback model **required** for this workspace points only at the cloud (optional cloud models are fine if unused when offline).
+4. **Core** MCP servers are vendored/local and start without network. Optional online MCP (search, fetch, remote GitHub, etc.) must not block session start if unreachable — prefer `enabled = false` by default or short timeouts + non-fatal doctor checks.
+5. If Grok itself phones home for auth/telemetry, document it; prefer modes that work with local models without live xAI session **if the CLI supports that**. Validate during Phase 1; if a signed-in cloud session is required just to start the binary, treat that as a **core-path blocker**.
 
 ---
 
@@ -188,7 +220,7 @@ Prefer **project-scoped** config in `.grok/config.toml`. Every MCP command must 
 | `git` | Vendored git MCP **or** thin wrappers in `linux-admin-mcp` | Local repo inspect/commit | No `git fetch`/`push` in default tools |
 | `memory` | Vendored memory MCP **or** local JSON under `.linux-admin/memory/` | Persist host facts | Disk only |
 
-**Removed from scope:** `@modelcontextprotocol/server-fetch` and any HTTP/SSE remote MCP. Web/CVE lookup is not a core capability.
+**Optional online MCP (Tier A+ / not on core path):** e.g. `fetch`, web search, remote docs. Allowed when the operator wants enrichment. Requirements: (1) not required for any core skill success criterion; (2) short timeouts; (3) clean “network unavailable” errors; (4) disabled in the default offline profile or omitted from `doctor-offline` success conditions; (5) must not use `npx -y` at session start without a local cache.
 
 **Filesystem allowlist (recommended MVP):**
 
@@ -243,17 +275,18 @@ vendor/                   # or node_modules committed via bootstrap path
 - Mutations require `confirm=true` **and** Grok permission approval.
 - Elevated tools call the shared **sudo runner** (§6.2); they never embed passwords in argv visible to the model.
 - **No raw `run_shell` tool in v1.**
-- **No tools whose primary purpose is outbound internet** (`curl` to WAN, `wget`, `pip install`, `npm install`, `docker pull`, `git fetch`).
-- Package tools: prefer `dpkg-query`, `apt-cache` (local), `apt-get -s` simulate; document that applying upgrades needs reachable mirrors *as an OS fact*, not an agent dependency for diagnosis and planning from local state.
+- **Core tool surface** has no required outbound internet. Optional online tools (if any) live behind explicit names (`web_search`, `fetch_url`, …), document offline unavailability, and never block other tools.
+- Package tools: prefer `dpkg-query`, `apt-cache` (local), `apt-get -s` simulate; document that applying upgrades needs reachable mirrors *as an OS fact*. Diagnosis and planning from local state must still work offline.
 - Credential tools (store/list/delete metadata, unlock session) live in `linux-admin-mcp` under a `credentials` group; **secret values are never returned in tool results**.
 
 ### 4.3 Tier C — Optional (Phase 3)
 
 | Server | When | Offline rule |
 |--------|------|--------------|
-| Docker MCP | Docker present | Unix socket only; skills must not `docker pull` by default |
+| Docker MCP | Docker present | Unix socket only; skills must not require `docker pull` |
 | Local Prometheus / node_exporter | If already on host | `127.0.0.1` scrape only |
-| Playwright / GitHub / remote HTTP MCP | **Not in project profile** | Keep out of `.grok/config.toml` for this repo |
+| Web search / fetch / remote docs MCP | Operator opt-in | Optional online layer; fail soft; off by default in offline profile |
+| Playwright / cloud GitHub MCP | Operator opt-in only | Must not be required for core admin; avoid blocking startup |
 
 ### 4.4 Example project config (illustrative, offline-safe)
 
@@ -309,16 +342,17 @@ max_output_bytes = 40000
 
 ### 5.1 Project rules — `AGENTS.md`
 
-1. **Offline by default.** Do not use network tools, remote MCP, or cloud models. If a task truly requires internet (e.g. download a package with empty local cache), say so and stop — do not silently call the WAN.
-2. **Read before write.** Inspect status/logs/config before changing anything.
-3. **Plan for reversibility.** Prefer drop-ins, package holds, backups under staging.
-4. **Stage then apply.** Propose diffs in-repo or `/tmp/linux-admin-staging`, then apply with approval.
-5. **Prefer MCP admin tools** over ad-hoc shell when a specialized tool exists.
-6. **Never** pipe remote content to a shell, disable security frameworks casually, or store secrets in the git repo or in chat/logs.
-7. **Never request or echo sudo passwords in the model transcript.** Elevation goes through the credential store + sudo runner only.
-8. **Report impact:** change, rollback, verify; note which sudo mode was used (`nopasswd` / `askpass` / `cached` / `tty` / `manual`) without secrets.
-9. **Local model awareness:** short tool results; summarize large logs.
-10. **Knowledge source order:** in-repo skills/docs → local man pages (`man`, `/usr/share/doc`) → host state. Not the web.
+1. **Local-first.** Complete admin work using host state, in-repo skills, and core MCP. Optional online tools (search, fetch, etc.) only as enrichment when available — never as a hard dependency for local tasks.
+2. **If online tools fail or WAN is down:** continue with the local path; report what could not be enriched. Do not stall the session.
+3. **Read before write.** Inspect status/logs/config before changing anything.
+4. **Plan for reversibility.** Prefer drop-ins, package holds, backups under staging.
+5. **Stage then apply.** Propose diffs in-repo or `/tmp/linux-admin-staging`, then apply with approval.
+6. **Prefer MCP admin tools** over ad-hoc shell when a specialized tool exists.
+7. **Never** pipe remote content to a shell, disable security frameworks casually, or store secrets in the git repo or in chat/logs.
+8. **Never request or echo sudo passwords in the model transcript.** Elevation goes through the credential store + sudo runner only.
+9. **Report impact:** change, rollback, verify; note which sudo mode was used (`nopasswd` / `askpass` / `cached` / `tty` / `manual`) without secrets.
+10. **Local model awareness:** short tool results; summarize large logs.
+11. **Knowledge source order:** host state → in-repo skills/docs → local man pages → **optional** online search/docs if configured and reachable.
 
 ### 5.2 Skills (repo-local only)
 
@@ -331,7 +365,7 @@ max_output_bytes = 40000
 | `boot-health` | post-reboot failures | failed units, journal `-b -p err` |
 | `harden-check` | security check | listening ports, failed SSH, local hardening state |
 
-No skill may list “search the web” or “fetch CVE page” as a required step.
+No skill may list “search the web” or “fetch CVE page” as a **required** step. Optional “if network available…” enrichment is fine.
 
 ### 5.3 Permission posture
 
@@ -569,7 +603,7 @@ linux-admin/
 ├── scripts/
 │   ├── bootstrap.sh          # ONLINE: install deps, pull models, vendor MCP
 │   ├── doctor.sh             # basic health
-│   ├── doctor-offline.sh     # fail if egress required; simulate/check offline
+│   ├── doctor-offline.sh     # assert CORE path only (optional online may be red)
 │   ├── linux-admin-askpass   # SUDO_ASKPASS helper (no secret in repo)
 │   └── sudoers.example       # optional NOPASSWD profiles
 ├── docs/
@@ -627,18 +661,20 @@ linux-admin/
 
 1. Apt/dpkg tools with clear offline semantics (elevated as needed).
 2. package-update / disk-pressure skills.
-3. Optional local Docker socket MCP (no pulls).
-4. Headless read-only health report (cron-friendly, offline).
+3. Optional local Docker socket MCP (no pull required for core use).
+4. Headless read-only health report (cron-friendly; core path offline).
 5. Session unlock TTL for stored sudo secret; audit fields for sudo_mode.
+6. Optional online enrichment MCP (search/fetch) with fail-soft behavior and offline profile toggle.
 
-**Exit criteria:** Health report and dry-run package plan from local state without internet; headless elevate via askpass when configured, or clean `manual` handoff when not.
+**Exit criteria:** Health report and dry-run package plan from local state without internet; headless elevate via askpass when configured, or clean `manual` handoff when not; online helpers soft-fail without breaking core session.
 
 ### Phase 4 — Hardening & ops (ongoing)
 
 - Audit log `logs/agent-audit.jsonl` (local).
-- Expand allowlists carefully; never add raw shell or WAN tools.
+- Expand allowlists carefully; never add raw shell as a core tool.
 - Stronger local models as hardware allows.
-- **No** cloud hybrid profile in this project. (Separate personal Grok config may still use cloud elsewhere; this repo’s config must not.)
+- Keep default project profile on Ollama; optional cloud models elsewhere must not become required for this repo’s core path.
+- Revisit optional online helpers for quality; never promote them into doctor-offline requirements.
 
 ---
 
@@ -647,7 +683,7 @@ linux-admin/
 | Level | What |
 |-------|------|
 | Doctor | Ollama up, models on disk, MCP entrypoints exist and start |
-| Doctor-offline | Drop default route or use network namespace; full smoke prompt; no process should need WAN |
+| Doctor-offline | Drop default route; core smoke prompt must pass; optional online tools may fail/absent |
 | MCP unit | Allowlist rejects `bash -c`, `curl`, `docker pull`; caps output |
 | Elevate unit | Mode matrix with fake `sudo`; askpass never logs secret; `manual` returns structured error |
 | Creds unit | host_id isolation; list/status never returns secret bytes; file backend 0600 |
@@ -683,7 +719,8 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 | Ollama down | Agent unusable | Doctor; **no cloud fallback** (fail closed, fix local) |
 | `npx -y` / uvx at runtime | Offline failure + supply chain | Vendor + lockfiles; offline doctor asserts no registry access |
 | Apt mirrors unreachable | Cannot install new packages | Expected; agent still diagnoses; report “needs mirror/cache” |
-| Inherited user MCP (Playwright, GitHub) | Surprise egress | Project MCP closed set; document disabling WAN MCP for admin sessions |
+| Optional online MCP blocks startup | Offline session unusable | Core MCP only for start; online MCP lazy/timeout; offline profile disables them |
+| Agent refuses work without search | False offline failure | Skills local-first; online is enrichment only |
 
 ---
 
@@ -704,7 +741,7 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 
 - `doctor-offline.sh` green with no default route.
 - Full tool-using admin session with WAN down (diagnose + stage + verified read-only report).
-- Zero registered MCP tools that perform non-loopback network I/O by default.
+- Zero **required** core MCP tools that need non-loopback network I/O; optional online tools are documented and fail soft.
 - Zero unapproved host mutations in interactive mode.
 - P95 Ollama tool-loop latency acceptable interactively (target &lt; 15s/step on chosen model).
 - All custom MCP tools covered by allowlist unit tests including “no WAN binaries.”
@@ -728,13 +765,14 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Runtime network | **None required** | Hard product requirement: full capacity offline |
-| Inference | **Ollama only** (loopback) | No cloud LLM in project profile |
-| Cloud fallback | **None** | Fail closed; fix local stack |
-| Agent host | Grok CLI if offline-viable | Validate in Phase 1; do not assume cloud |
-| Tool boundary | Vendored local MCP + custom server | No registry at session start |
-| Fetch / web MCP | **Out of scope** | Breaks offline contract |
-| Knowledge | In-repo skills + local man/docs | No web dependency |
+| Core runtime network | **None required** | Full local admin capacity offline |
+| Optional online services | Allowed, fail soft | Search/CVE/fetch etc. must not block core path |
+| Inference (default) | **Ollama** (loopback) | Required for core path; cloud not required |
+| Cloud as hard dependency | **No** | Fail closed on local stack for core work |
+| Agent host | Grok CLI if offline-viable | Validate in Phase 1 |
+| Tool boundary | Vendored local MCP + custom server | No registry required at session start for core |
+| Fetch / web MCP | Optional enrichment | Not required; soft-fail offline |
+| Knowledge | Local-first, online optional | Skills never require the web |
 | Mutations | Double-gated | High blast radius |
 | Raw shell MCP | Not in v1 | Injection / safety |
 | Credentials | Per-host store under XDG / keyring | Offline; not in git; bound to machine-id |
@@ -756,4 +794,4 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 | **PR6** | feat: package/disk skills + offline apt semantics | skills, package tools | PR5 |
 | **PR7** | feat: headless read-only health report | scripts, docs | PR5 |
 
-Each PR must preserve the offline contract and the credential contract: no secrets in git, no secret echo in tool results, doctor-offline still green.
+Each PR must preserve the **core offline contract** (doctor-offline green), the credential contract (no secrets in git or tool results), and the rule that optional online features never become hard dependencies.
