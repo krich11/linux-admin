@@ -1,0 +1,32 @@
+# Staging / local agent state
+staging/
+.linux-admin/
+logs/
+*.audit.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+
+# Node
+node_modules/
+
+# Secrets / machine-local overrides
+.env
+.env.*
+!.env.example
+.grok/config.local.toml
+
+# OS / editor
+.DS_Store
+*~
+*.swp
+.idea/
+.vscode/
