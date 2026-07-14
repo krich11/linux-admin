@@ -1,8 +1,9 @@
 # linux-admin
 
-**Local-first** Linux administration agent:
+**Local-first** Linux administration agent with a **Grok-style CLI** (TUI chat + tools — not a web UI):
 
-- **Grok CLI** as the agent host (tools, permissions, sessions, ACP)
+- **Interface:** Grok TUI via a `linux-admin` launcher (scrollback, prompt, streamed tools, approvals)
+- **Harness:** Grok CLI / ACP (local process)
 - **Ollama** for required LLM inference (`http://127.0.0.1:11434/v1`)
 - **Local MCP servers** launched from vendored / lockfile-installed binaries on disk
 - **Per-host credential repository** (OS keyring or encrypted local store — never git)

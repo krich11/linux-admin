@@ -4,7 +4,8 @@
 **Owner:** krich11  
 **Host:** Ubuntu 24.04 LTS (`phoenix`)  
 **Agent harness:** Grok CLI / ACP (local process only)  
-**LLM backend:** Ollama only (`http://127.0.0.1:11434/v1`)  
+**Primary UI:** **Grok-style CLI TUI** (see §1.2) — not a web UI  
+**LLM backend:** Ollama (`http://127.0.0.1:11434/v1`) for the core path  
 **Repo:** `krich11/linux-admin`  
 **Hard constraint:** **Core admin path is 100% offline-capable** (see §1.1). Optional online helpers are allowed if they never block that path.
 
@@ -631,14 +632,14 @@ linux-admin/
 
 - [x] `PLAN.md`, `README.md`, `.gitignore`
 - [x] GitHub repo `krich11/linux-admin`
-- [x] Offline constraint documented
+- [x] Offline constraint documented (core path + optional online layer)
 - [x] Per-host credentials + adaptive sudo design (§6)
 - [ ] `docs/offline.md` / `docs/credentials.md` full operator docs in follow-up PRs
 
 ### Phase 1 — Local LLM + offline baseline MCP (1–2 days)
 
 1. Install Ollama; pull models; **prove inference with WAN disabled**.
-2. Project `.grok/config.toml`: **only** Ollama models; default = ollama-admin.
+2. Project `.grok/config.toml`: default = Ollama admin model; core path does not require cloud models.
 3. Vendor filesystem (and optional memory/git) MCP; wire absolute local commands.
 4. `scripts/bootstrap.sh` + `scripts/doctor.sh` + `scripts/doctor-offline.sh`.
 5. Smoke test full prompt loop offline.
@@ -651,7 +652,7 @@ linux-admin/
 1. Read-only tools (systemd, journal, df, ss).
 2. **Credential repository:** host_id binding, keyring + encrypted-file backends, `linux-admin creds` CLI.
 3. **Adaptive sudo runner:** probe order, modes `cached` / `nopasswd` / `askpass` / `tty` / `manual`, askpass helper.
-4. Mutation tools call elevate.runner; policy + confirm gates; no WAN tools.
+4. Mutation tools call elevate.runner; policy + confirm gates; core tools remain offline-capable.
 5. Skills: diagnose-service, boot-health, network-diagnose (local).
 6. Unit tests: allowlist, offline apt behavior, **elevation mode matrix** (mock sudo), assert secrets never appear in tool JSON.
 
@@ -716,7 +717,7 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 | Wrong sudo mode (hang on password) | Stuck headless agent | Prefer `sudo -n`; fail to `manual` instead of indefinite prompt |
 | Host A creds used on host B | Cross-machine misuse | Bind store to `machine-id`; refuse mismatch without re-init |
 | `/etc` corruption | Outage | Staging, diffs, drop-ins |
-| Ollama down | Agent unusable | Doctor; **no cloud fallback** (fail closed, fix local) |
+| Ollama down | Core path unusable | Doctor; fix local Ollama (cloud is not the required backup for this project) |
 | `npx -y` / uvx at runtime | Offline failure + supply chain | Vendor + lockfiles; offline doctor asserts no registry access |
 | Apt mirrors unreachable | Cannot install new packages | Expected; agent still diagnoses; report “needs mirror/cache” |
 | Optional online MCP blocks startup | Offline session unusable | Core MCP only for start; online MCP lazy/timeout; offline profile disables them |
