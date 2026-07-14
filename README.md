@@ -31,16 +31,28 @@ Planning. Architecture, MCP inventory, offline contract, credentials/sudo, and P
 ## Intent
 
 ```
-You → Grok (this repo) → Ollama (loopback, local weights)     [CORE]
-                       → MCP admin tools (vendored)           [CORE]
-                       → credential store + sudo runner       [CORE]
-                       → Ubuntu host (inspect → plan → apply → verify)
+You (CLI) → linux-admin → Grok TUI (Grok-style interface)
+                        → Ollama (loopback, local weights)     [CORE]
+                        → MCP admin tools (vendored)           [CORE]
+                        → credential store + sudo runner       [CORE]
+                        → Ubuntu host (inspect → plan → apply → verify)
 
-                    ↘ optional: search / fetch / remotes      [ONLINE]
-                      (enrichment only; soft-fail offline)
+                     ↘ optional: search / fetch / remotes      [ONLINE]
+                       (enrichment only; soft-fail offline)
 
+Headless: linux-admin -p "…"
 Secrets never go to the LLM or to git
 ```
+
+## Interface (planned)
+
+| Mode | Command (planned) | Experience |
+|------|-------------------|------------|
+| Interactive | `linux-admin` | Full Grok-style TUI in this project |
+| Headless | `linux-admin -p "…"` | One-shot / scripts / cron |
+| Utilities | `linux-admin creds|doctor|…` | Non-chat ops |
+
+We reuse Grok’s TUI rather than building a separate web or custom terminal framework.
 
 ## Prerequisites (high level)
 

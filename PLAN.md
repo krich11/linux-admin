@@ -22,6 +22,73 @@ Build a **local-first Linux administration agent** that:
 5. Defaults to **least privilege** and explicit confirmation for destructive actions.
 6. Maintains a **per-host credential repository** (local, never git) and **flexible sudo elevation** that works whether the host requires a password, uses NOPASSWD, has a valid sudo timestamp, or needs a human at a TTY.
 7. May offer **optional online enrichment** (web search, CVE lookup, docs fetch, etc.) when the network is available — without making those services necessary for startup or for local admin work.
+8. Presents a **Grok-style CLI interface** to CLI-capable operators (interactive TUI + headless), not a web console.
+
+### 1.2 User interface decision: Grok-style CLI
+
+**Decision:** Primary interface is a **terminal TUI in the Grok style** — conversation scrollback, bottom prompt, streamed tool calls, permission prompts, slash commands / model picker patterns the operator already knows from Grok.
+
+**Audience:** Fully CLI-capable users (SSH, local TTY, multiplexers). No web UI required for v1.
+
+#### How we deliver it (yes — manageable)
+
+We **do not reimplement** a Grok-like TUI from scratch. We **use Grok CLI as the UI shell** and productize this repo around it:
+
+| Piece | Role |
+|-------|------|
+| **Grok TUI** | Interactive session: scrollback, prompt, tool streaming, approvals |
+| **Project config** | `.grok/config.toml` — Ollama models, core MCP, permissions posture |
+| **AGENTS.md + skills** | Admin personality and runbooks |
+| **`linux-admin` launcher** | Thin wrapper so the product entrypoint is memorable and correct |
+
+```bash
+# Operator experience (target)
+cd ~/src/linux-admin   # or any configured workspace
+linux-admin            # → execs grok with project defaults (model, cwd, profile)
+
+linux-admin -p "list failed units"          # headless / scriptable
+linux-admin creds status                    # utility subcommands (creds, doctor)
+linux-admin doctor
+linux-admin doctor-offline
+```
+
+Suggested launcher behavior:
+
+```bash
+#!/usr/bin/env bash
+# scripts/linux-admin → install to PATH as `linux-admin`
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT" || exit 1
+case "${1:-}" in
+  creds|doctor|doctor-offline|bootstrap) exec "$ROOT/scripts/${1}.sh" "${@:2}" ;;
+  -p|--print|headless) shift; exec grok -m ollama-admin -p "$*" ;;
+  *) exec grok -m ollama-admin "$@" ;;
+esac
+```
+
+(Exact flags refined in Phase 1; the point is **one command → Grok-style session** pre-wired for this agent.)
+
+#### UX expectations (Grok-style)
+
+| Expectation | Implementation |
+|-------------|----------------|
+| Full-screen (or terminal) chat TUI | Grok interactive mode |
+| Tool calls visible in scrollback | Grok tool streaming (MCP + built-ins as configured) |
+| Human approval for mutations | Grok permission prompts; project must **not** force always-approve |
+| Model switch / local models | `/model` or picker → Ollama admin models |
+| Resume sessions | Grok session resume where available |
+| Scripting / cron | `linux-admin -p "..."` or `grok -p` headless |
+| SSH-friendly | Plain terminal; no display server |
+
+#### Explicit non-UI for v1
+
+- Custom web dashboard as primary UX  
+- Separate “fake Grok” TUI framework (Ink/Bubble Tea clone of Grok) — only reconsider if Grok cannot run offline with Ollama  
+- IDE-only ACP as the *only* entry (ACP remains optional for those who want it)
+
+#### Fallback
+
+If Phase 1 proves Grok cannot satisfy the offline core path (e.g. hard cloud auth), the UI *contract* stays “Grok-style CLI”; the harness may be replaced, but that is a contingency — not the default plan.
 
 ### 1.1 Offline-first constraint (non-negotiable for the core path)
 
@@ -98,12 +165,14 @@ Build a **local-first Linux administration agent** that:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Operator (TUI / headless / ACP IDE)                             │
-│  All paths: local process only                                   │
+│  Operator — Grok-style CLI (primary)                             │
+│  `linux-admin` → Grok TUI  |  `linux-admin -p` headless          │
+│  Optional: ACP IDE client; not required                          │
 └────────────────────────────┬─────────────────────────────────────┘
-                             │ prompts / approvals
+                             │ prompts / approvals (TUI)
 ┌────────────────────────────▼─────────────────────────────────────┐
 │  Grok agent (this repo as cwd)                                   │
+│  • Grok-style scrollback + prompt + tool stream                  │
 │  • default model = ollama-* (required core path)                 │
 │  • AGENTS.md / .grok project config                              │
 │  • Skills + in-repo runbooks (local-first; online optional)      │
@@ -136,7 +205,8 @@ Build a **local-first Linux administration agent** that:
 
 | Layer | Choice | Rationale |
 |-------|--------|-----------|
-| Agent host | Grok CLI **with project model override** | Local process; must be configured so sessions never call xAI for this repo |
+| UI | Grok-style CLI TUI via Grok + `linux-admin` wrapper | CLI-capable users; no web UI in v1 |
+| Agent host | Grok CLI **with project model override** | Same process that owns the TUI; local models + MCP |
 | Models | Ollama on loopback | Weights and inference stay on host; Grok custom `base_url` |
 | Tools | Local stdio MCP from **vendor/** or locked venv | No registry hits at startup; portable tool boundary |
 | Knowledge | In-repo skills + docs first | Online search/docs optional enrichment only |
@@ -602,6 +672,7 @@ linux-admin/
 ├── vendor/                   # bootstrap-produced JS MCP trees (gitignored or LFS policy TBD)
 │   └── mcp/...
 ├── scripts/
+│   ├── linux-admin           # primary CLI entry → Grok TUI / subcommands
 │   ├── bootstrap.sh          # ONLINE: install deps, pull models, vendor MCP
 │   ├── doctor.sh             # basic health
 │   ├── doctor-offline.sh     # assert CORE path only (optional online may be red)
@@ -636,16 +707,17 @@ linux-admin/
 - [x] Per-host credentials + adaptive sudo design (§6)
 - [ ] `docs/offline.md` / `docs/credentials.md` full operator docs in follow-up PRs
 
-### Phase 1 — Local LLM + offline baseline MCP (1–2 days)
+### Phase 1 — Local LLM + Grok-style CLI entry + offline baseline MCP (1–2 days)
 
 1. Install Ollama; pull models; **prove inference with WAN disabled**.
 2. Project `.grok/config.toml`: default = Ollama admin model; core path does not require cloud models.
-3. Vendor filesystem (and optional memory/git) MCP; wire absolute local commands.
-4. `scripts/bootstrap.sh` + `scripts/doctor.sh` + `scripts/doctor-offline.sh`.
-5. Smoke test full prompt loop offline.
-6. Verify Grok does not require live cloud model access for this project session.
+3. **`scripts/linux-admin` launcher** → opens Grok TUI in this repo with correct model; document usage in README.
+4. Vendor filesystem (and optional memory/git) MCP; wire absolute local commands.
+5. `scripts/bootstrap.sh` + `scripts/doctor.sh` + `scripts/doctor-offline.sh`.
+6. Smoke test: interactive Grok-style session + `linux-admin -p` headless, offline.
+7. Verify Grok does not require live cloud model access for this project session.
 
-**Exit criteria:** Airplane-mode (or default route down) session can read allowlisted files and answer admin questions via Ollama; doctor-offline green.
+**Exit criteria:** Operator runs `linux-admin` and gets a Grok-style TUI; airplane-mode session can read allowlisted paths and answer admin questions via Ollama; doctor-offline green.
 
 ### Phase 2 — Custom `linux-admin-mcp` + credential store + sudo runner (4–6 days)
 
@@ -754,7 +826,7 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 ## 13. Immediate next actions
 
 1. Install Ollama; pull models; **airplane-mode inference test**.
-2. Scaffold `.grok/config.toml` (Ollama-only), `AGENTS.md`, bootstrap + doctor + doctor-offline.
+2. Scaffold `.grok/config.toml` (Ollama default), `scripts/linux-admin` launcher, `AGENTS.md`, bootstrap + doctor + doctor-offline.
 3. Vendor filesystem MCP; smoke test offline.
 4. Scaffold `linux-admin-mcp` with `service_status` vertical slice.
 5. Spike: Grok + Ollama with network disabled; record any cloud dependency.
@@ -770,7 +842,10 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 | Optional online services | Allowed, fail soft | Search/CVE/fetch etc. must not block core path |
 | Inference (default) | **Ollama** (loopback) | Required for core path; cloud not required |
 | Cloud as hard dependency | **No** | Fail closed on local stack for core work |
-| Agent host | Grok CLI if offline-viable | Validate in Phase 1 |
+| Primary UI | **Grok-style CLI TUI** | CLI-capable users; reuse Grok, do not rebuild TUI |
+| Entrypoint | `linux-admin` → `grok` | One command, project-wired |
+| Web UI | Not v1 | Optional later, never required |
+| Agent host | Grok CLI if offline-viable | Validate offline in Phase 1 |
 | Tool boundary | Vendored local MCP + custom server | No registry required at session start for core |
 | Fetch / web MCP | Optional enrichment | Not required; soft-fail offline |
 | Knowledge | Local-first, online optional | Skills never require the web |
@@ -787,7 +862,7 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 | PR | Title | Scope | Depends on |
 |----|-------|-------|------------|
 | **PR0** | docs: plan + offline + credentials/sudo design | `PLAN.md`, `README.md`, `.gitignore` | — |
-| **PR1** | feat: Ollama-only Grok config + offline doctor | `.grok/config.toml`, `docs/offline.md`, `docs/ollama-models.md`, `scripts/doctor*.sh` | PR0, Ollama + models on disk |
+| **PR1** | feat: Grok-style CLI entry + Ollama config + offline doctor | `scripts/linux-admin`, `.grok/config.toml`, `docs/offline.md`, `docs/ollama-models.md`, `scripts/doctor*.sh`, README usage | PR0, Ollama + models on disk |
 | **PR2** | feat: vendored baseline MCP (no npx -y) | `vendor/` or bootstrap, `AGENTS.md`, `scripts/bootstrap.sh` | PR1 |
 | **PR3** | feat: linux-admin-mcp read-only slice | `mcp/linux_admin/**`, tests | PR2 |
 | **PR4** | feat: per-host credential repository | `creds/*`, CLI, keyring/file backends, `docs/credentials.md` | PR3 |
