@@ -10,8 +10,8 @@ export PATH="${HOME}/.local/bin:${PATH}"
 source "$ROOT/scripts/lib-env.sh"
 
 echo "== linux-admin bootstrap =="
-echo "ollama endpoint: $OLLAMA_BASE_URL"
-echo "admin model:     $OLLAMA_ADMIN_MODEL"
+echo "primary Ollama:  $OLLAMA_BASE_URL ($OLLAMA_ADMIN_MODEL)"
+echo "local fallback:  $OLLAMA_LOCAL_BASE_URL ($OLLAMA_LOCAL_MODEL)"
 
 if ! command -v uv >/dev/null 2>&1; then
   echo "installing uv..."
@@ -39,6 +39,9 @@ else
 fi
 
 "$ROOT/scripts/install-user-models.sh"
+
+# Break-glass local model (small) so admin works if LAN Ollama is down
+"$ROOT/scripts/ensure-local-model.sh" || echo "WARNING: local fallback not ready — run later: linux-admin ensure-local"
 
 if command -v linux-admin-creds >/dev/null 2>&1; then
   linux-admin-creds init --policy auto --backend file || true

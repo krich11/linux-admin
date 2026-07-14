@@ -3,7 +3,7 @@
 **Local-first** Linux administration agent with a **Grok-style CLI**.
 
 - **UI:** `linux-admin` → Grok TUI (scrollback, prompt, tools, approvals)
-- **LLM:** LAN Ollama at `http://192.168.200.120:11434` (default `qwen2.5-coder:7b`; see `config/ollama.env`)
+- **LLM:** LAN Ollama `192.168.200.120` (primary, `qwen2.5-coder:7b`) + **local** `127.0.0.1` fallback (`llama3.2:3b`) when LAN is down
 - **Tools:** `linux-admin-mcp` (systemd, journal, disk, network, packages, …)
 - **Creds / sudo:** per-host store + adaptive elevation (NOPASSWD, askpass, TTY, manual)
 - **Offline core path:** full local admin without WAN; optional online helpers must not block
@@ -24,12 +24,17 @@ linux-admin -p "List failed systemd units and free disk space"
 linux-admin doctor
 linux-admin doctor-offline
 
+# keep local break-glass model ready
+linux-admin ensure-local
+
 # credentials (never pass passwords on argv)
 linux-admin creds init
 linux-admin creds set-sudo
 linux-admin creds set-policy --allow-askpass
 linux-admin creds doctor
 ```
+
+Model auto-select: LAN `ollama-admin` if up, else local `ollama-local`. Force with `LINUX_ADMIN_MODEL=…`.
 
 ## Layout
 

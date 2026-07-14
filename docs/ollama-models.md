@@ -1,42 +1,55 @@
 # Ollama models
 
-Inference is on the **LAN Ollama host**, not a private model repo inside this git project.
+linux-admin uses **two** inference paths. Neither stores weights in this git repo.
 
-## Endpoint (this deployment)
+## Primary — LAN Ollama
 
 | Setting | Default |
 |---------|---------|
-| Server | `http://192.168.200.120:11434` |
-| Config file | `config/ollama.env` |
-| Admin weights | `qwen2.5-coder:7b` |
-| Fast weights | `llama3.2:3b` |
-| Grok model ids | `ollama-admin`, `ollama-fast` |
+| URL | `http://192.168.200.120:11434` |
+| Grok id | `ollama-admin` |
+| Weights | `qwen2.5-coder:7b` |
+| Also | `ollama-fast` → `llama3.2:3b` on the same host |
 
-Override:
+Full library lives on that server (50+ tags).
+
+## Fallback — local Ollama (break-glass)
+
+| Setting | Default |
+|---------|---------|
+| URL | `http://127.0.0.1:11434` |
+| Grok id | `ollama-local` |
+| Weights | `llama3.2:3b` (small, on **this** machine) |
+
+Use when the LAN Ollama host is down — e.g. to troubleshoot networking or that server itself.
 
 ```bash
-export OLLAMA_BASE_URL=http://192.168.200.120:11434
-export OLLAMA_ADMIN_MODEL=qwen2.5-coder:14b-base-q4_0
-./scripts/install-user-models.sh
+linux-admin ensure-local    # start local Ollama if needed + pull fallback model
 ```
 
-## Grok config caveat
+## Auto selection
 
-Grok loads **`[model.*]` only from `~/.grok/config.toml`**. Project `.grok/config.toml` wires **MCP** only.
+`linux-admin` picks:
+
+1. `ollama-admin` if primary responds  
+2. else `ollama-local` if local responds  
+3. else errors  
+
+Force:
 
 ```bash
-./scripts/install-user-models.sh   # writes base_url + model tags into user config
-curl -s http://192.168.200.120:11434/api/tags | head
-grok models                        # should list ollama-admin
+LINUX_ADMIN_MODEL=ollama-local linux-admin
+LINUX_ADMIN_MODEL=ollama-admin linux-admin
 ```
 
-Models are pulled and stored **on the Ollama server** (`192.168.200.120`), not in this repository.
+## Config
 
-## Suggested tags (already on the remote library)
+Edit `config/ollama.env`, then:
 
-| Role | Tag |
-|------|-----|
-| Admin / tools (default) | `qwen2.5-coder:7b` |
-| Stronger coding | `qwen2.5-coder:14b-base-q4_0`, `qwen2.5:14b` |
-| General | `llama3.1:8b`, `hermes3:8b` |
-| Small / fast | `llama3.2:3b`, `qwen2.5:3b` |
+```bash
+./scripts/install-user-models.sh   # refresh ~/.grok/config.toml [model.*]
+./scripts/ensure-local-model.sh    # ensure local weights exist
+linux-admin doctor
+```
+
+Grok only loads `[model.*]` from `~/.grok/config.toml` (user config). Project `.grok/` wires MCP only.

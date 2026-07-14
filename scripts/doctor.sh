@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Core path health check.
+# Core path health check (primary LAN + local fallback).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -8,16 +8,18 @@ export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${HOME}/.local/bin:${PATH}"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib-env.sh"
 
-OLLAMA_URL="$OLLAMA_BASE_URL"
 FAIL=0
+PRIMARY_OK=0
+LOCAL_OK=0
 
 ok() { printf '  [OK]  %s\n' "$*"; }
 bad() { printf '  [FAIL] %s\n' "$*"; FAIL=1; }
 warn() { printf '  [WARN] %s\n' "$*"; }
 
 echo "== linux-admin doctor =="
-echo "root: $ROOT"
-echo "ollama: $OLLAMA_URL"
+echo "root:     $ROOT"
+echo "primary:  $OLLAMA_BASE_URL  ($OLLAMA_ADMIN_MODEL)"
+echo "local:    $OLLAMA_LOCAL_BASE_URL  ($OLLAMA_LOCAL_MODEL)"
 
 if command -v grok >/dev/null 2>&1; then
   ok "grok: $(command -v grok)"
@@ -25,30 +27,37 @@ else
   bad "grok not on PATH"
 fi
 
-if curl -sS --max-time 5 "${OLLAMA_URL}/api/tags" >/tmp/linux-admin-ollama-tags.json 2>/dev/null; then
-  ok "ollama API at ${OLLAMA_URL}"
-  if command -v python3 >/dev/null; then
-    models=$(python3 -c 'import json; d=json.load(open("/tmp/linux-admin-ollama-tags.json")); print(",".join(m.get("name","") for m in d.get("models",[])[:12]))' 2>/dev/null || true)
-    count=$(python3 -c 'import json; d=json.load(open("/tmp/linux-admin-ollama-tags.json")); print(len(d.get("models",[])))' 2>/dev/null || echo 0)
-    if [[ "${count}" != "0" ]]; then
-      ok "ollama models: ${count} total (sample: ${models}...)"
-    else
-      bad "ollama has no models"
-    fi
-    # ensure configured admin model exists
-    if python3 -c "import json; d=json.load(open('/tmp/linux-admin-ollama-tags.json')); names={m.get('name') for m in d.get('models',[])}; import sys; sys.exit(0 if '${OLLAMA_ADMIN_MODEL}' in names or any('${OLLAMA_ADMIN_MODEL}'.split(':')[0] in (n or '') for n in names) else 1)"; then
-      ok "admin model present on server: ${OLLAMA_ADMIN_MODEL}"
-    else
-      # exact match check
-      if python3 -c "import json,sys; d=json.load(open('/tmp/linux-admin-ollama-tags.json')); names={m.get('name') for m in d.get('models',[])}; sys.exit(0 if '${OLLAMA_ADMIN_MODEL}' in names else 1)"; then
-        ok "admin model present: ${OLLAMA_ADMIN_MODEL}"
-      else
-        bad "admin model '${OLLAMA_ADMIN_MODEL}' not on server — pick another in config/ollama.env"
-      fi
-    fi
+# --- Primary (LAN) ---
+if curl -sS --max-time 5 "${OLLAMA_BASE_URL}/api/tags" >/tmp/linux-admin-ollama-primary.json 2>/dev/null; then
+  PRIMARY_OK=1
+  count=$(python3 -c 'import json; d=json.load(open("/tmp/linux-admin-ollama-primary.json")); print(len(d.get("models",[])))' 2>/dev/null || echo 0)
+  ok "primary Ollama up (${count} models)"
+  if python3 -c "import json,sys; d=json.load(open('/tmp/linux-admin-ollama-primary.json')); names={m.get('name') for m in d.get('models',[])}; sys.exit(0 if '${OLLAMA_ADMIN_MODEL}' in names else 1)"; then
+    ok "primary has admin model: ${OLLAMA_ADMIN_MODEL}"
+  else
+    warn "primary missing ${OLLAMA_ADMIN_MODEL} — edit config/ollama.env"
   fi
 else
-  bad "ollama not reachable at ${OLLAMA_URL}"
+  warn "primary Ollama unreachable at ${OLLAMA_BASE_URL} (will use local if available)"
+fi
+
+# --- Local fallback ---
+if curl -sS --max-time 3 "${OLLAMA_LOCAL_BASE_URL}/api/tags" >/tmp/linux-admin-ollama-local.json 2>/dev/null; then
+  if python3 -c "import json,sys; d=json.load(open('/tmp/linux-admin-ollama-local.json')); names={m.get('name') for m in d.get('models',[])}; sys.exit(0 if '${OLLAMA_LOCAL_MODEL}' in names else 1)"; then
+    LOCAL_OK=1
+    ok "local fallback ready: ${OLLAMA_LOCAL_MODEL} @ ${OLLAMA_LOCAL_BASE_URL}"
+  else
+    warn "local Ollama up but missing ${OLLAMA_LOCAL_MODEL} — run: linux-admin ensure-local"
+  fi
+else
+  warn "local Ollama not reachable at ${OLLAMA_LOCAL_BASE_URL} — run: linux-admin ensure-local"
+fi
+
+if [[ "$PRIMARY_OK" -eq 0 && "$LOCAL_OK" -eq 0 ]]; then
+  bad "no usable Ollama path (primary and local both unavailable)"
+else
+  sel="$(select_grok_model 2>/dev/null || true)"
+  ok "auto-selected Grok model id: ${sel:-unknown}"
 fi
 
 if [[ -x "$ROOT/mcp/linux_admin/.venv/bin/linux-admin-mcp" ]]; then
@@ -69,16 +78,11 @@ else
   bad "missing .grok/config.toml"
 fi
 
-if grep -q '\[model\.ollama-admin\]' "${HOME}/.grok/config.toml" 2>/dev/null; then
-  ok "user grok config has [model.ollama-admin]"
-  if grep -A5 '\[model\.ollama-admin\]' "${HOME}/.grok/config.toml" | grep -q "$OLLAMA_BASE_URL\|192.168.200.120"; then
-    ok "ollama-admin base_url points at configured Ollama host"
-  else
-    warn "ollama-admin base_url may be stale — run: scripts/install-user-models.sh"
-    grep -A5 '\[model\.ollama-admin\]' "${HOME}/.grok/config.toml" | sed 's/^/         /'
-  fi
+if grep -q '\[model\.ollama-admin\]' "${HOME}/.grok/config.toml" 2>/dev/null \
+  && grep -q '\[model\.ollama-local\]' "${HOME}/.grok/config.toml" 2>/dev/null; then
+  ok "user grok config has ollama-admin + ollama-local"
 else
-  bad "missing [model.ollama-admin] in ~/.grok/config.toml (run: scripts/install-user-models.sh)"
+  bad "missing model entries — run: scripts/install-user-models.sh"
 fi
 
 if [[ -f "$ROOT/AGENTS.md" ]]; then
