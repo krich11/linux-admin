@@ -1,28 +1,10 @@
 # Project-scoped Grok config for linux-admin (core path offline-capable).
 # Secrets do not belong here.
-
-[models]
-default = "ollama-admin"
-
-# Do not set fork_secondary_model to a cloud-only model for this project.
-
-[model.ollama-admin]
-model = "llama3.2:3b"
-base_url = "http://127.0.0.1:11434/v1"
-name = "Ollama Admin"
-api_backend = "chat_completions"
-context_window = 16384
-temperature = 0.2
-max_completion_tokens = 4096
-
-[model.ollama-fast]
-model = "llama3.2:3b"
-base_url = "http://127.0.0.1:11434/v1"
-name = "Ollama Fast"
-api_backend = "chat_completions"
-context_window = 8192
-temperature = 0.3
-max_completion_tokens = 2048
+#
+# IMPORTANT: Grok only loads [model.*] from ~/.grok/config.toml (user config).
+# Project files may define [mcp_servers], [plugins], and [permission] only.
+# Models are installed by scripts/install-user-models.sh (via bootstrap).
+# The linux-admin launcher always passes -m ollama-admin.
 
 # Core MCP: local venv entrypoint (no runtime package-registry installers).
 # Path is machine-local; bootstrap creates the venv.

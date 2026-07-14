@@ -45,6 +45,10 @@ else
   ollama pull "$PULL_MODEL"
 fi
 
+# Grok only loads custom models from ~/.grok/config.toml (not project .grok).
+# MCP servers still come from project .grok/config.toml.
+"$ROOT/scripts/install-user-models.sh"
+
 # Init creds metadata (no password)
 if command -v linux-admin-creds >/dev/null 2>&1; then
   linux-admin-creds init --policy auto --backend file || true

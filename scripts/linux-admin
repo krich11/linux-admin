@@ -7,8 +7,13 @@ cd "$ROOT"
 
 export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${HOME}/.local/bin:${PATH}"
 
-# Default model id from project config
+# Default model id (registered in ~/.grok/config.toml by install-user-models.sh)
 MODEL="${LINUX_ADMIN_MODEL:-ollama-admin}"
+
+# Best-effort: ensure user model entries exist (no-op if already present)
+if [[ -x "$ROOT/scripts/install-user-models.sh" ]]; then
+  "$ROOT/scripts/install-user-models.sh" >/dev/null 2>&1 || true
+fi
 
 usage() {
   cat <<'EOF'

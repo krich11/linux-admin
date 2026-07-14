@@ -58,6 +58,12 @@ else
   bad "missing .grok/config.toml"
 fi
 
+if grep -q '\[model\.ollama-admin\]' "${HOME}/.grok/config.toml" 2>/dev/null; then
+  ok "user grok config has [model.ollama-admin]"
+else
+  bad "missing [model.ollama-admin] in ~/.grok/config.toml (run: scripts/install-user-models.sh)"
+fi
+
 if [[ -f "$ROOT/AGENTS.md" ]]; then
   ok "AGENTS.md present"
 else
