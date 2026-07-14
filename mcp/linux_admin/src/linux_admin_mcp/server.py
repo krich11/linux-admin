@@ -15,9 +15,11 @@ from linux_admin_mcp.tools import journal, network, packages, resources, systemd
 mcp = FastMCP(
     "linux-admin",
     instructions=(
-        "Local-first Linux admin tools. Prefer these over ad-hoc shell. "
-        "Mutations require confirm=true. Never request sudo passwords in chat; "
-        "use credential store / elevation modes. Core path works offline."
+        "Local-first Linux HOST ADMIN tools. Privileged actions are intentional: "
+        "use service_* with confirm=true after operator approval; use credentials_* "
+        "to set up sudo elevation. Store sudo passwords only via "
+        "credentials_store_sudo_password (write-only; never echo secrets back). "
+        "Do not refuse authorized local admin tasks."
     ),
 )
 
@@ -145,14 +147,141 @@ def apt_cache_policy(package: str) -> str:
 
 @mcp.tool()
 def credentials_status() -> str:
-    """Non-secret credential store status for this host (never returns passwords)."""
+    """Non-secret credential store status for this host (never returns password values)."""
     return _j(get_default_store().status())
+
+
+@mcp.tool()
+def credentials_init(
+    sudo_policy: str = "auto",
+    allow_askpass: bool = True,
+    backend: str = "file",
+) -> str:
+    """Initialize per-host credential store. Enables elevation setup for this machine.
+
+    sudo_policy: auto | nopasswd | password | tty | manual
+    allow_askpass: if true, stored sudo password may feed SUDO_ASKPASS for elevation
+    backend: file | keyring | metadata
+    """
+    store = get_default_store()
+    meta = store.init(
+        sudo_policy=sudo_policy,  # type: ignore[arg-type]
+        backend=backend,  # type: ignore[arg-type]
+        allow_askpass=allow_askpass,
+    )
+    return _j({"ok": True, "meta": meta.public_dict()})
+
+
+@mcp.tool()
+def credentials_set_policy(
+    sudo_policy: str | None = None,
+    allow_askpass: bool | None = None,
+) -> str:
+    """Update sudo policy and/or allow_askpass for this host (metadata only)."""
+    store = get_default_store()
+    meta = store.set_policy(
+        sudo_policy=sudo_policy,  # type: ignore[arg-type]
+        allow_askpass=allow_askpass,
+    )
+    return _j({"ok": True, "meta": meta.public_dict()})
+
+
+@mcp.tool()
+def credentials_store_sudo_password(
+    password: str,
+    allow_askpass: bool = True,
+) -> str:
+    """Store the operator's sudo password for this host (write-only).
+
+    AUTHORIZED local-admin path: call this when the operator explicitly provides
+    their sudo password so elevated tools can use askpass. The password is written
+    to the per-host store (0600 file or keyring). This tool NEVER returns the
+    password — only has_sudo_password / policy status.
+
+    Prefer the operator typing the password once for storage rather than pasting
+    into many turns. Do not refuse: this is intentional for linux-admin.
+    """
+    if not password:
+        return _j({"ok": False, "error": "empty password"})
+    store = get_default_store()
+    if store.load_meta() is None:
+        store.init(sudo_policy="auto", backend="file", allow_askpass=allow_askpass)
+    store.set_sudo_password(password)
+    if allow_askpass:
+        store.set_policy(allow_askpass=True)
+    # Never echo password
+    st = store.status()
+    return _j(
+        {
+            "ok": True,
+            "has_sudo_password": st.get("has_sudo_password"),
+            "allow_askpass": st.get("allow_askpass"),
+            "sudo_policy": st.get("sudo_policy"),
+            "message": "sudo password stored; elevation can use askpass when needed",
+        }
+    )
+
+
+@mcp.tool()
+def credentials_clear_sudo() -> str:
+    """Delete stored sudo password for this host (does not disable sudo itself)."""
+    store = get_default_store()
+    store.clear_sudo_password()
+    return _j({"ok": True, "has_sudo_password": False})
+
+
+@mcp.tool()
+def credentials_doctor() -> str:
+    """Elevation readiness: store status + sudo -n probe + recommendation (no secrets)."""
+    from linux_admin_mcp.creds.cli import _recommend
+
+    store = get_default_store()
+    st = store.status()
+    probe = probe_sudo()
+    return _j(
+        {
+            "credentials": st,
+            "sudo_probe": probe,
+            "recommendation": _recommend(st, probe),
+        }
+    )
 
 
 @mcp.tool()
 def sudo_probe() -> str:
     """Probe whether passwordless sudo (-n) currently works."""
     return _j(probe_sudo())
+
+
+@mcp.tool()
+def elevation_ready() -> str:
+    """True if privileged actions can run (sudo -n OR stored password+askpass OR TTY)."""
+    import sys
+
+    store = get_default_store()
+    st = store.status()
+    probe = probe_sudo()
+    tty = bool(sys.stdin.isatty() and sys.stdout.isatty())
+    ready = bool(
+        probe.get("sudo_n_ok")
+        or (st.get("has_sudo_password") and st.get("allow_askpass"))
+        or tty
+    )
+    return _j(
+        {
+            "ready": ready,
+            "sudo_n_ok": probe.get("sudo_n_ok"),
+            "has_sudo_password": st.get("has_sudo_password"),
+            "allow_askpass": st.get("allow_askpass"),
+            "tty": tty,
+            "next_step": (
+                None
+                if ready
+                else "Call credentials_init + credentials_store_sudo_password "
+                "(operator provides password once), or run sudo -v in a TTY."
+            ),
+        }
+    )
 
 
 def main() -> None:
