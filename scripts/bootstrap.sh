@@ -38,7 +38,8 @@ else
   echo "WARNING: cannot reach ${OLLAMA_BASE_URL} — fix network/Ollama host before using the agent."
 fi
 
-"$ROOT/scripts/install-user-models.sh"
+# Pick best T4-friendly model on LAN, register Grok endpoints, set session default once
+"$ROOT/scripts/install-user-models.sh" --pick --set-default
 
 # Break-glass local model (small) so admin works if LAN Ollama is down
 "$ROOT/scripts/ensure-local-model.sh" || echo "WARNING: local fallback not ready — run later: linux-admin ensure-local"

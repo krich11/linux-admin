@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Primary CLI entry: Grok-style TUI pre-wired for this repo.
+#
+# Model selection: Grok remembers the last-used model across sessions.
+# We do NOT pass -m on every launch (that would override /model and sticky
+# last-used). Only force a model when LINUX_ADMIN_MODEL is set, or when
+# doing headless one-shots without an explicit model (then auto primary/local).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -9,40 +14,59 @@ export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${HOME}/.local/bin:${PATH}"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib-env.sh"
 
-# Best-effort: ensure Grok model entries exist (primary + local)
+# Register model endpoints in user config if missing (does not force default
+# every time — see install-user-models.sh --set-default only on bootstrap).
 if [[ -x "$ROOT/scripts/install-user-models.sh" ]]; then
   "$ROOT/scripts/install-user-models.sh" >/dev/null 2>&1 || true
 fi
-
-# Auto-select primary vs local unless LINUX_ADMIN_MODEL is forced
-MODEL="$(select_grok_model || true)"
-MODEL="${MODEL:-ollama-local}"
 
 usage() {
   cat <<EOF
 linux-admin — local Linux admin agent (Grok-style CLI)
 
 Usage:
-  linux-admin                 Start interactive Grok TUI (auto model select)
-  linux-admin -p "prompt"     Headless one-shot (also: --print)
+  linux-admin                 Interactive TUI (Grok last-used / config default)
+  linux-admin -p "prompt"     Headless one-shot
   linux-admin creds ...       Credential repository CLI
-  linux-admin doctor          Core path health checks
-  linux-admin doctor-offline  Core-path checks (no public cloud LLM)
-  linux-admin bootstrap       Install deps + register models + local fallback
-  linux-admin ensure-local    Pull/start local break-glass model only
-  linux-admin mcp             Run linux-admin-mcp on stdio (debug)
-  linux-admin help            This help
+  linux-admin doctor          Health checks
+  linux-admin doctor-offline  Core-path checks
+  linux-admin bootstrap       Deps + pick best T4 model on LAN + local fallback
+  linux-admin ensure-local    Local break-glass model only
+  linux-admin pick-model      Print best LAN model for T4 (no config write)
+  linux-admin mcp             MCP stdio server
+  linux-admin help
 
-Model selection (auto):
-  1) LAN Ollama  → Grok id ollama-admin  (${OLLAMA_BASE_URL} / ${OLLAMA_ADMIN_MODEL})
-  2) Local Ollama → Grok id ollama-local (${OLLAMA_LOCAL_BASE_URL} / ${OLLAMA_LOCAL_MODEL})
+Models (switch anytime in TUI with /model or Ctrl+M):
+  ollama-admin   LAN primary  (${OLLAMA_BASE_URL})
+  ollama-fast    LAN small
+  ollama-local   this host    (${OLLAMA_LOCAL_BASE_URL} / ${OLLAMA_LOCAL_MODEL})
 
-Force a model:
-  LINUX_ADMIN_MODEL=ollama-admin linux-admin
+Force a model for one launch:
   LINUX_ADMIN_MODEL=ollama-local linux-admin
+  LINUX_ADMIN_MODEL=ollama-admin linux-admin -p "…"
 
 Config: config/ollama.env
 EOF
+}
+
+# Build optional -m args: only if user forced LINUX_ADMIN_MODEL
+grok_model_args() {
+  if [[ -n "${LINUX_ADMIN_MODEL:-}" ]]; then
+    printf '%s\n' -m "$LINUX_ADMIN_MODEL"
+  fi
+}
+
+# Headless: if no force, prefer primary when up else local (no sticky session)
+headless_model_args() {
+  if [[ -n "${LINUX_ADMIN_MODEL:-}" ]]; then
+    printf '%s\n' -m "$LINUX_ADMIN_MODEL"
+    return
+  fi
+  local sel
+  sel="$(select_grok_model 2>/dev/null || true)"
+  if [[ -n "$sel" ]]; then
+    printf '%s\n' -m "$sel"
+  fi
 }
 
 cmd="${1:-}"
@@ -66,6 +90,9 @@ case "$cmd" in
   ensure-local)
     exec "$ROOT/scripts/ensure-local-model.sh"
     ;;
+  pick-model)
+    exec python3 "$ROOT/scripts/pick-admin-model.py" "$OLLAMA_BASE_URL" --rank
+    ;;
   mcp)
     exec linux-admin-mcp
     ;;
@@ -76,15 +103,16 @@ case "$cmd" in
       exit 2
     fi
     prompt="$*"
-    echo "linux-admin: model=${MODEL}" >&2
-    exec grok -m "$MODEL" --disable-web-search -p "$prompt"
+    # shellcheck disable=SC2046
+    exec grok $(headless_model_args) --disable-web-search -p "$prompt"
     ;;
   "")
-    echo "linux-admin: model=${MODEL}" >&2
-    exec grok -m "$MODEL" --disable-web-search
+    # Interactive: let Grok use last-used / [models].default — do not force -m
+    # shellcheck disable=SC2046
+    exec grok $(grok_model_args) --disable-web-search
     ;;
   *)
-    echo "linux-admin: model=${MODEL}" >&2
-    exec grok -m "$MODEL" --disable-web-search "$@"
+    # shellcheck disable=SC2046
+    exec grok $(grok_model_args) --disable-web-search "$@"
     ;;
 esac

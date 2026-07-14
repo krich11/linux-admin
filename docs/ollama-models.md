@@ -1,55 +1,55 @@
 # Ollama models
 
-linux-admin uses **two** inference paths. Neither stores weights in this git repo.
+## Why `/model` / last-used works
 
-## Primary — LAN Ollama
+`linux-admin` **does not pass `-m` on interactive launch**, so Grok keeps:
 
-| Setting | Default |
-|---------|---------|
-| URL | `http://192.168.200.120:11434` |
-| Grok id | `ollama-admin` |
-| Weights | `qwen2.5-coder:7b` |
-| Also | `ollama-fast` → `llama3.2:3b` on the same host |
+1. The model you last used in the TUI (`/model`, Ctrl+M), or  
+2. `[models].default` from `~/.grok/config.toml` (set once at **bootstrap** to `ollama-admin`)
 
-Full library lives on that server (50+ tags).
-
-## Fallback — local Ollama (break-glass)
-
-| Setting | Default |
-|---------|---------|
-| URL | `http://127.0.0.1:11434` |
-| Grok id | `ollama-local` |
-| Weights | `llama3.2:3b` (small, on **this** machine) |
-
-Use when the LAN Ollama host is down — e.g. to troubleshoot networking or that server itself.
-
-```bash
-linux-admin ensure-local    # start local Ollama if needed + pull fallback model
-```
-
-## Auto selection
-
-`linux-admin` picks:
-
-1. `ollama-admin` if primary responds  
-2. else `ollama-local` if local responds  
-3. else errors  
-
-Force:
+Force a model only when you want to:
 
 ```bash
 LINUX_ADMIN_MODEL=ollama-local linux-admin
-LINUX_ADMIN_MODEL=ollama-admin linux-admin
+LINUX_ADMIN_MODEL=ollama-admin linux-admin -p "…"
 ```
 
-## Config
+Headless (`-p`) still auto-picks primary vs local if you do not set `LINUX_ADMIN_MODEL`, because there is no sticky interactive session.
 
-Edit `config/ollama.env`, then:
+## Primary — LAN Ollama (T4 16GB)
+
+| Setting | Value |
+|---------|--------|
+| URL | `http://192.168.200.120:11434` |
+| Grok id | `ollama-admin` |
+| Weights | **Auto-picked at bootstrap** for T4 (see below) |
 
 ```bash
-./scripts/install-user-models.sh   # refresh ~/.grok/config.toml [model.*]
-./scripts/ensure-local-model.sh    # ensure local weights exist
-linux-admin doctor
+linux-admin bootstrap          # re-pick + register + set default once
+linux-admin pick-model         # show ranking only
+./scripts/install-user-models.sh --pick --set-default
 ```
 
-Grok only loads `[model.*]` from `~/.grok/config.toml` (user config). Project `.grok/` wires MCP only.
+Picker rules (`scripts/pick-admin-model.py`):
+
+- Blob ≲ 10 GB (room for KV/context on 16 GB T4)
+- Prefer ~12–15B instruct Q4 models (quality)
+- Prefer modern families (Qwen2.5, etc.) and coding/instruct tags
+- Skip embeddings, image toys, and pure `:base` checkpoints
+
+## Fallback — local
+
+| Grok id | URL | Weights |
+|---------|-----|---------|
+| `ollama-local` | `127.0.0.1:11434` | `llama3.2:3b` |
+
+```bash
+linux-admin ensure-local
+```
+
+## Also registered
+
+| Grok id | Role |
+|---------|------|
+| `ollama-fast` | Smaller LAN model for quick turns |
+| `ollama-local` | Break-glass on this machine |

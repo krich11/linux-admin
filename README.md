@@ -34,7 +34,7 @@ linux-admin creds set-policy --allow-askpass
 linux-admin creds doctor
 ```
 
-Model auto-select: LAN `ollama-admin` if up, else local `ollama-local`. Force with `LINUX_ADMIN_MODEL=…`.
+Interactive sessions use **Grok’s last-used model** (or `/model`). Bootstrap picks the best T4-friendly LAN weights for `ollama-admin`. Force with `LINUX_ADMIN_MODEL=…` only when needed.
 
 ## Layout
 
