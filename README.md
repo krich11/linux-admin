@@ -1,71 +1,52 @@
 # linux-admin
 
-**Local-first** Linux administration agent with a **Grok-style CLI** (TUI chat + tools — not a web UI):
+**Local-first** Linux administration agent with a **Grok-style CLI**.
 
-- **Interface:** Grok TUI via a `linux-admin` launcher (scrollback, prompt, streamed tools, approvals)
-- **Harness:** Grok CLI / ACP (local process)
-- **Ollama** for required LLM inference (`http://127.0.0.1:11434/v1`)
-- **Local MCP servers** launched from vendored / lockfile-installed binaries on disk
-- **Per-host credential repository** (OS keyring or encrypted local store — never git)
-- **Adaptive sudo** for hosts that need a password, NOPASSWD, a cached ticket, a TTY prompt, or a manual handoff
-- **Optional online helpers** (search, docs fetch, etc.) when the network is up — never required for local admin
+- **UI:** `linux-admin` → Grok TUI (scrollback, prompt, tools, approvals)
+- **LLM:** Ollama on `127.0.0.1:11434` (default model `llama3.2:3b`)
+- **Tools:** `linux-admin-mcp` (systemd, journal, disk, network, packages, …)
+- **Creds / sudo:** per-host store + adaptive elevation (NOPASSWD, askpass, TTY, manual)
+- **Offline core path:** full local admin without WAN; optional online helpers must not block
 
-## Offline / air-gap contract
+## Quick start
 
-**Core path must work at full local capacity with no internet** after bootstrap: Ollama, credentials, sudo, skills, and admin tools.
+```bash
+# once (needs network for install/pull)
+./scripts/bootstrap.sh
 
-Some resources are inherently online-only (internet search, remote CVE/docs, upstream mirrors). Those are fine as **optional enrichment**. They must:
+# interactive Grok-style session
+linux-admin
 
-- fail fast and clearly when unreachable  
-- not block session start  
-- not be required steps in core admin skills  
+# headless
+linux-admin -p "List failed systemd units and free disk space"
 
-There is **no cloud LLM requirement** for this project’s default profile.
+# health
+linux-admin doctor
+linux-admin doctor-offline
 
-Details: **[PLAN.md](./PLAN.md)** (§1.1, §6).
-
-## Status
-
-Planning. Architecture, MCP inventory, offline contract, credentials/sudo, and PR breakdown are in `PLAN.md`.
-
-## Intent
-
-```
-You (CLI) → linux-admin → Grok TUI (Grok-style interface)
-                        → Ollama (loopback, local weights)     [CORE]
-                        → MCP admin tools (vendored)           [CORE]
-                        → credential store + sudo runner       [CORE]
-                        → Ubuntu host (inspect → plan → apply → verify)
-
-                     ↘ optional: search / fetch / remotes      [ONLINE]
-                       (enrichment only; soft-fail offline)
-
-Headless: linux-admin -p "…"
-Secrets never go to the LLM or to git
+# credentials (never pass passwords on argv)
+linux-admin creds init
+linux-admin creds set-sudo
+linux-admin creds set-policy --allow-askpass
+linux-admin creds doctor
 ```
 
-## Interface (planned)
+## Layout
 
-| Mode | Command (planned) | Experience |
-|------|-------------------|------------|
-| Interactive | `linux-admin` | Full Grok-style TUI in this project |
-| Headless | `linux-admin -p "…"` | One-shot / scripts / cron |
-| Utilities | `linux-admin creds|doctor|…` | Non-chat ops |
+| Path | Purpose |
+|------|---------|
+| `scripts/linux-admin` | Primary CLI entry |
+| `.grok/config.toml` | Ollama models + MCP wiring |
+| `AGENTS.md` | Agent operating rules |
+| `mcp/linux_admin/` | Custom MCP server + elevate/creds |
+| `skills/` | Local admin runbooks |
+| `docs/` | Offline, credentials, security, models |
+| `PLAN.md` | Full design |
 
-We reuse Grok’s TUI rather than building a separate web or custom terminal framework.
+## Offline contract
 
-## Prerequisites (high level)
-
-1. Ubuntu (developed against 24.04)
-2. Grok CLI installed on disk
-3. Ollama installed, models **already pulled**, serving on `127.0.0.1:11434`
-4. Bootstrap completed once online (`scripts/bootstrap.sh` — forthcoming) so MCP deps exist under `vendor/` / `.venv`
-
-## Repository
-
-GitHub: [krich11/linux-admin](https://github.com/krich11/linux-admin)  
-(GitHub is for source distribution only — not a runtime dependency of the core path.)
+See [docs/offline.md](./docs/offline.md). Core path must work with no internet after bootstrap. Search/CVE/etc. may be unavailable and must fail soft.
 
 ## License
 
-TBD in follow-up (default leaning MIT unless noted otherwise).
+MIT — see [LICENSE](./LICENSE).

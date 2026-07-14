@@ -1,0 +1,38 @@
+# Project-scoped Grok config for linux-admin (core path offline-capable).
+# Secrets do not belong here.
+
+[models]
+default = "ollama-admin"
+
+# Do not set fork_secondary_model to a cloud-only model for this project.
+
+[model.ollama-admin]
+model = "llama3.2:3b"
+base_url = "http://127.0.0.1:11434/v1"
+name = "Ollama Admin"
+api_backend = "chat_completions"
+context_window = 16384
+temperature = 0.2
+max_completion_tokens = 4096
+
+[model.ollama-fast]
+model = "llama3.2:3b"
+base_url = "http://127.0.0.1:11434/v1"
+name = "Ollama Fast"
+api_backend = "chat_completions"
+context_window = 8192
+temperature = 0.3
+max_completion_tokens = 2048
+
+# Core MCP: local venv entrypoint (no runtime package-registry installers).
+# Path is machine-local; bootstrap creates the venv.
+[mcp_servers.linux-admin]
+command = "/home/krich/src/linux-admin/mcp/linux_admin/.venv/bin/linux-admin-mcp"
+args = []
+enabled = true
+startup_timeout_sec = 30
+tool_timeout_sec = 120
+tool_timeouts = { service_restart = 90, apt_list_upgradable = 180, journal_since = 60 }
+
+[mcp]
+max_output_bytes = 40000

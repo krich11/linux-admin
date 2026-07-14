@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# SUDO_ASKPASS helper — delegates to installed python entrypoint.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${PATH}"
+exec linux-admin-askpass

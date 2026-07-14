@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Primary CLI entry: Grok-style TUI pre-wired for this repo.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${HOME}/.local/bin:${PATH}"
+
+# Default model id from project config
+MODEL="${LINUX_ADMIN_MODEL:-ollama-admin}"
+
+usage() {
+  cat <<'EOF'
+linux-admin — local Linux admin agent (Grok-style CLI)
+
+Usage:
+  linux-admin                 Start interactive Grok TUI in this repo
+  linux-admin -p "prompt"     Headless one-shot (also: --print)
+  linux-admin creds ...       Credential repository CLI
+  linux-admin doctor          Core path health checks
+  linux-admin doctor-offline  Offline core-path checks
+  linux-admin bootstrap       Install deps / vendor / optional model pull
+  linux-admin mcp             Run linux-admin-mcp on stdio (debug)
+  linux-admin help            This help
+
+Environment:
+  LINUX_ADMIN_MODEL   Grok model id (default: ollama-admin)
+  OLLAMA_HOST         Ollama base (default: 127.0.0.1:11434)
+EOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+  help|-h|--help)
+    usage
+    ;;
+  creds)
+    shift
+    exec linux-admin-creds "$@"
+    ;;
+  doctor)
+    exec "$ROOT/scripts/doctor.sh"
+    ;;
+  doctor-offline)
+    exec "$ROOT/scripts/doctor-offline.sh"
+    ;;
+  bootstrap)
+    exec "$ROOT/scripts/bootstrap.sh" "${@:2}"
+    ;;
+  mcp)
+    exec linux-admin-mcp
+    ;;
+  -p|--print|headless)
+    shift
+    if [[ $# -eq 0 ]]; then
+      echo "usage: linux-admin -p \"prompt\"" >&2
+      exit 2
+    fi
+    # join remaining args as prompt
+    prompt="$*"
+    exec grok -m "$MODEL" -p "$prompt"
+    ;;
+  "")
+    exec grok -m "$MODEL"
+    ;;
+  *)
+    # Pass through extra grok flags, e.g. linux-admin --help for grok
+    exec grok -m "$MODEL" "$@"
+    ;;
+esac

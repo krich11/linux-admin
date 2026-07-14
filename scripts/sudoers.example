@@ -1,0 +1,16 @@
+# Example least-privilege sudoers snippet for linux-admin (OPTIONAL).
+# Install only after human review:
+#   sudo install -m 440 scripts/sudoers.example /etc/sudoers.d/linux-admin
+#
+# Replace USER with the operator account. Prefer absolute paths from `type -p`.
+
+# Cmnd_Alias LINUX_ADMIN_SAFE = /usr/bin/systemctl status *, /usr/bin/systemctl show *, \
+#   /usr/bin/journalctl, /usr/bin/df, /usr/bin/free, /usr/bin/ss, /usr/sbin/ip
+
+# Cmnd_Alias LINUX_ADMIN_MUTATE = /usr/bin/systemctl start *, /usr/bin/systemctl stop *, \
+#   /usr/bin/systemctl restart *, /usr/bin/systemctl reload *
+
+# USER ALL=(root) NOPASSWD: LINUX_ADMIN_SAFE
+# USER ALL=(root) NOPASSWD: LINUX_ADMIN_MUTATE
+
+# Defaults: still prefer agent confirm=true + Grok permission prompts.
