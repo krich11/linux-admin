@@ -48,6 +48,27 @@ def main(argv: list[str] | None = None) -> None:
 
     sub.add_parser("clear-sudo", help="Delete stored sudo password")
 
+    p_imp = sub.add_parser(
+        "import-file",
+        help="Import sudo password from drop file (default /tmp/sudo_password.txt)",
+    )
+    p_imp.add_argument(
+        "path",
+        nargs="?",
+        default="/tmp/sudo_password.txt",
+        help="Allowlisted drop file path",
+    )
+    p_imp.add_argument(
+        "--keep",
+        action="store_true",
+        help="Do not delete the source file after import",
+    )
+    p_imp.add_argument(
+        "--no-askpass",
+        action="store_true",
+        help="Store password but do not enable allow_askpass",
+    )
+
     p_pol = sub.add_parser("set-policy", help="Update sudo policy / askpass flag")
     p_pol.add_argument(
         "--policy",
@@ -96,6 +117,20 @@ def main(argv: list[str] | None = None) -> None:
     if args.cmd == "clear-sudo":
         store.clear_sudo_password()
         print(json.dumps({"ok": True, "has_sudo_password": False}, indent=2))
+        return
+
+    if args.cmd == "import-file":
+        from .import_file import import_sudo_password_file
+
+        result = import_sudo_password_file(
+            args.path,
+            allow_askpass=not args.no_askpass,
+            delete_after=not args.keep,
+            store=store,
+        )
+        print(json.dumps(result, indent=2))
+        if not result.get("ok"):
+            sys.exit(1)
         return
 
     if args.cmd == "set-policy":

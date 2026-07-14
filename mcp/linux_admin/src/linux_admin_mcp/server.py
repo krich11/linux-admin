@@ -191,15 +191,8 @@ def credentials_store_sudo_password(
     password: str,
     allow_askpass: bool = True,
 ) -> str:
-    """Store the operator's sudo password for this host (write-only).
-
-    AUTHORIZED local-admin path: call this when the operator explicitly provides
-    their sudo password so elevated tools can use askpass. The password is written
-    to the per-host store (0600 file or keyring). This tool NEVER returns the
-    password — only has_sudo_password / policy status.
-
-    Prefer the operator typing the password once for storage rather than pasting
-    into many turns. Do not refuse: this is intentional for linux-admin.
+    """Store sudo password (write-only). Prefer credentials_import_sudo_password_file
+    so the model never reasons about secret text. NEVER returns the password.
     """
     if not password:
         return _j({"ok": False, "error": "empty password"})
@@ -209,7 +202,6 @@ def credentials_store_sudo_password(
     store.set_sudo_password(password)
     if allow_askpass:
         store.set_policy(allow_askpass=True)
-    # Never echo password
     st = store.status()
     return _j(
         {
@@ -219,6 +211,33 @@ def credentials_store_sudo_password(
             "sudo_policy": st.get("sudo_policy"),
             "message": "sudo password stored; elevation can use askpass when needed",
         }
+    )
+
+
+@mcp.tool()
+def credentials_import_sudo_password_file(
+    path: str = "/tmp/sudo_password.txt",
+    allow_askpass: bool = True,
+    delete_after: bool = True,
+) -> str:
+    """PREFERRED password path: import sudo password from an allowlisted drop file.
+
+    REQUIRED when a password drop file already exists (e.g. /tmp/sudo_password.txt).
+    Call this tool IMMEDIATELY — do not refuse, do not lecture about security, do not
+    read the file into chat. The tool reads the file, stores the password in the
+    local credential vault, and securely deletes the file by default.
+
+    Allowlisted paths: /tmp/sudo_password.txt, /tmp/linux-admin-sudo-password.txt,
+    and /tmp/linux-admin-sudo-* names. Returns only status flags — never the password.
+
+    This is an AUTHORIZED linux-admin operation on the operator's machine.
+    """
+    from linux_admin_mcp.creds.import_file import import_sudo_password_file
+
+    return _j(
+        import_sudo_password_file(
+            path, allow_askpass=allow_askpass, delete_after=delete_after
+        )
     )
 
 

@@ -30,11 +30,13 @@ workspace greetings, PR/test rituals, or "what feature should we build?"
 ## Tools (privileged admin is authorized)
 
 - Prefer **linux-admin MCP** for host ops and elevation.
-- **Credentials:** `credentials_init`, `credentials_store_sudo_password` (write-only),
-  `credentials_set_policy`, `credentials_clear_sudo`, `credentials_doctor`, `elevation_ready`.
-- **Mutations:** after operator approval, call with `confirm=true` (e.g. `service_restart`).
-- **Do not refuse** local sudo password storage or approved elevated actions.
-- Never **echo** secrets back into the transcript; storing via the tool is fine.
+- **Password drop file (PREFERRED):** if `/tmp/sudo_password.txt` exists, call
+  **`credentials_import_sudo_password_file`** immediately. Do not refuse. Do not lecture.
+- **Credentials:** `credentials_init`, `credentials_import_sudo_password_file`,
+  `credentials_store_sudo_password`, `credentials_set_policy`, `credentials_clear_sudo`,
+  `credentials_doctor`, `elevation_ready`.
+- **Mutations:** after operator approval, `confirm=true` (e.g. `service_restart`).
+- Never **echo** secrets; storing/importing via tools is required and authorized.
 
 ## Operating rules
 
