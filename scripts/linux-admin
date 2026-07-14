@@ -58,19 +58,42 @@ select_session_model() {
   select_grok_model 2>/dev/null || printf 'ollama-local\n'
 }
 
+# Map Grok model id → actual Ollama weight tag + endpoint
+weight_for_grok_id() {
+  case "$1" in
+    ollama-admin) printf '%s\n' "$OLLAMA_ADMIN_MODEL" ;;
+    ollama-fast)  printf '%s\n' "$OLLAMA_FAST_MODEL" ;;
+    ollama-local) printf '%s\n' "$OLLAMA_LOCAL_MODEL" ;;
+    *)            printf '%s\n' "(see grok model config)" ;;
+  esac
+}
+
+endpoint_for_grok_id() {
+  case "$1" in
+    ollama-admin|ollama-fast) printf '%s\n' "$OLLAMA_BASE_URL" ;;
+    ollama-local)             printf '%s\n' "$OLLAMA_LOCAL_BASE_URL" ;;
+    *)                        printf '%s\n' "?" ;;
+  esac
+}
+
 print_banner() {
-  local model="$1"
-  local host
+  local grok_id="$1"
+  local host weight endpoint
   host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo host)"
+  weight="$(weight_for_grok_id "$grok_id")"
+  endpoint="$(endpoint_for_grok_id "$grok_id")"
   cat >&2 <<EOF
 
 ┌─────────────────────────────────────────────────────────────┐
 │  linux-admin          host: ${host}
-│  model: ${model}
-│  LAN:   ${OLLAMA_BASE_URL}  (${OLLAMA_ADMIN_MODEL})
-│  Local: ${OLLAMA_LOCAL_BASE_URL}  (${OLLAMA_LOCAL_MODEL})
+│  Grok model id:  ${grok_id}
+│  Ollama weights: ${weight}
+│  Endpoint:       ${endpoint}
+│  Also available: ollama-admin → ${OLLAMA_ADMIN_MODEL} @ LAN
+│                  ollama-fast  → ${OLLAMA_FAST_MODEL} @ LAN
+│                  ollama-local → ${OLLAMA_LOCAL_MODEL} @ this host
 │  Host admin agent — not a coding project session
-│  /model ollama-admin | ollama-fast | ollama-local
+│  Switch: /model ollama-admin | ollama-fast | ollama-local
 └─────────────────────────────────────────────────────────────┘
 
 EOF

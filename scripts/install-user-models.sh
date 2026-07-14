@@ -77,7 +77,8 @@ block = f"""
 [model.ollama-admin]
 model = "{admin_model}"
 base_url = "{remote_base}"
-name = "Ollama Admin (LAN)"
+name = "ollama-admin · {admin_model} (LAN)"
+description = "LAN Ollama weight tag: {admin_model} at {remote_base}"
 api_backend = "chat_completions"
 context_window = 32768
 temperature = 0.2
@@ -86,7 +87,8 @@ max_completion_tokens = 8192
 [model.ollama-fast]
 model = "{fast_model}"
 base_url = "{remote_base}"
-name = "Ollama Fast (LAN)"
+name = "ollama-fast · {fast_model} (LAN)"
+description = "LAN Ollama weight tag: {fast_model} at {remote_base}"
 api_backend = "chat_completions"
 context_window = 16384
 temperature = 0.3
@@ -96,7 +98,8 @@ max_completion_tokens = 4096
 [model.ollama-local]
 model = "{local_model}"
 base_url = "{local_base}"
-name = "Ollama Local (fallback)"
+name = "ollama-local · {local_model} (this host)"
+description = "Local Ollama weight tag: {local_model} at {local_base}"
 api_backend = "chat_completions"
 context_window = 16384
 temperature = 0.2
