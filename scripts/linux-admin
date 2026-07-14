@@ -62,15 +62,15 @@ case "$cmd" in
       echo "usage: linux-admin -p \"prompt\"" >&2
       exit 2
     fi
-    # join remaining args as prompt
     prompt="$*"
-    exec grok -m "$MODEL" -p "$prompt"
+    # Prefer local path: disable built-in web tools so offline isn't blocked by search.
+    exec grok -m "$MODEL" --disable-web-search -p "$prompt"
     ;;
   "")
-    exec grok -m "$MODEL"
+    exec grok -m "$MODEL" --disable-web-search
     ;;
   *)
-    # Pass through extra grok flags, e.g. linux-admin --help for grok
-    exec grok -m "$MODEL" "$@"
+    # Pass through extra grok flags; still pin model + local-first defaults
+    exec grok -m "$MODEL" --disable-web-search "$@"
     ;;
 esac
