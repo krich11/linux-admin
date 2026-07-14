@@ -19,6 +19,7 @@ Build a **fully local Linux administration agent** that:
 3. Exposes safe, scoped **local MCP servers** for filesystem, process/service control, packages, logs, network diagnostics, containers, and git — all launched from **pre-installed, vendored, or lockfile-resolved** binaries on disk.
 4. Encodes admin workflow knowledge as **project rules + skills** (shipped in-repo) so the agent prefers inspect → plan → apply → verify over blind shell.
 5. Defaults to **least privilege** and explicit confirmation for destructive actions.
+6. Maintains a **per-host credential repository** (local, never git) and **flexible sudo elevation** that works whether the host requires a password, uses NOPASSWD, has a valid sudo timestamp, or needs a human at a TTY.
 
 ### 1.1 Offline-first constraint (non-negotiable)
 
@@ -49,12 +50,13 @@ Build a **fully local Linux administration agent** that:
 
 ### Non-goals (v1)
 
-- Multi-host orchestration / fleet management (Ansible replacement).
+- Multi-host orchestration / fleet management (Ansible replacement). Per-host credential *stores* are local to each machine; there is no central secret server in v1.
 - Unattended root automation across the network.
 - Cloud or hybrid LLM routing (explicitly out of scope for this project profile).
 - Building a full custom agent runtime from scratch (reuse Grok as the tool-using agent host **in offline mode**).
 - Live web/CVE/documentation fetch as part of core workflows.
 - Depending on GitHub, npm registry, PyPI, or model hubs after first setup.
+- Putting sudo passwords, API tokens, or private keys in the git repository or in LLM prompts/logs.
 
 ---
 
@@ -83,11 +85,18 @@ Build a **fully local Linux administration agent** that:
 │ weights on disk   │     │  linux-admin (systemd/journal/…)       │
 │ no model pull at  │     │  docker* (local socket only)           │
 │ runtime           │     │  *optional; no registry pulls          │
-└───────────────────┘     └────────────────────────────────────────┘
-                             │
-                             ▼
+└───────────────────┘     └───────────────┬────────────────────────┘
+                                          │ elevate via sudo policy
+                    ┌─────────────────────▼────────────────────────┐
+                    │ Per-host credential repository (local only)  │
+                    │  ~/.local/share/linux-admin/ creds/          │
+                    │  or OS keyring (secret-service / kwallet)    │
+                    │  never git; never sent to the LLM            │
+                    └─────────────────────┬────────────────────────┘
+                                          ▼
                       Host OS (Ubuntu 24.04)
                       systemctl, apt/dpkg, journalctl, ip, ss, …
+                      sudo (NOPASSWD | password | cached ticket)
                       (no agent-initiated egress required)
 ```
 
@@ -100,6 +109,8 @@ Build a **fully local Linux administration agent** that:
 | Tools | Local stdio MCP from **vendor/** or locked venv | No registry hits at startup; portable tool boundary |
 | Knowledge | In-repo skills + docs | No web dependency for procedures |
 | Policy | Project rules + permission modes | High blast radius; conservative defaults |
+| Secrets | Per-host credential repo (XDG / keyring) | Offline, machine-scoped; not in git or model context |
+| Elevation | Adaptive sudo (see §6) | Hosts differ: password, NOPASSWD, ticket, or human TTY |
 
 ### Grok offline checklist
 
@@ -230,9 +241,11 @@ vendor/                   # or node_modules committed via bootstrap path
 - Binary allowlist (`systemctl`, `journalctl`, `apt-get`, `dpkg`, `ip`, `ss`, `df`, …).
 - Timeouts and output caps (spill large output to local files).
 - Mutations require `confirm=true` **and** Grok permission approval.
+- Elevated tools call the shared **sudo runner** (§6.2); they never embed passwords in argv visible to the model.
 - **No raw `run_shell` tool in v1.**
 - **No tools whose primary purpose is outbound internet** (`curl` to WAN, `wget`, `pip install`, `npm install`, `docker pull`, `git fetch`).
 - Package tools: prefer `dpkg-query`, `apt-cache` (local), `apt-get -s` simulate; document that applying upgrades needs reachable mirrors *as an OS fact*, not an agent dependency for diagnosis and planning from local state.
+- Credential tools (store/list/delete metadata, unlock session) live in `linux-admin-mcp` under a `credentials` group; **secret values are never returned in tool results**.
 
 ### 4.3 Tier C — Optional (Phase 3)
 
@@ -301,10 +314,11 @@ max_output_bytes = 40000
 3. **Plan for reversibility.** Prefer drop-ins, package holds, backups under staging.
 4. **Stage then apply.** Propose diffs in-repo or `/tmp/linux-admin-staging`, then apply with approval.
 5. **Prefer MCP admin tools** over ad-hoc shell when a specialized tool exists.
-6. **Never** pipe remote content to a shell, disable security frameworks casually, or store secrets in the repo.
-7. **Report impact:** change, rollback, verify.
-8. **Local model awareness:** short tool results; summarize large logs.
-9. **Knowledge source order:** in-repo skills/docs → local man pages (`man`, `/usr/share/doc`) → host state. Not the web.
+6. **Never** pipe remote content to a shell, disable security frameworks casually, or store secrets in the git repo or in chat/logs.
+7. **Never request or echo sudo passwords in the model transcript.** Elevation goes through the credential store + sudo runner only.
+8. **Report impact:** change, rollback, verify; note which sudo mode was used (`nopasswd` / `askpass` / `cached` / `tty` / `manual`) without secrets.
+9. **Local model awareness:** short tool results; summarize large logs.
+10. **Knowledge source order:** in-repo skills/docs → local man pages (`man`, `/usr/share/doc`) → host state. Not the web.
 
 ### 5.2 Skills (repo-local only)
 
@@ -331,27 +345,209 @@ Override any user-global `always-approve` for this project’s sessions.
 
 ---
 
-## 6. Safe change workflow
+## 6. Safe change workflow, credentials, and sudo
 
 ```
 1. Observe   → local MCP read tools
 2. Hypothesize → agent explains root cause (local knowledge)
 3. Propose   → staging / git
 4. Review    → human diff + rollback
-5. Apply     → gated MCP + sudo strategy
+5. Apply     → gated MCP + adaptive sudo runner (§6.2)
 6. Verify    → local status/logs/smoke
 7. Record    → local memory store + optional local git commit
+   (audit log records elevation mode, never passwords)
 ```
 
-### Sudo strategy
+### 6.1 Per-host credential repository
 
-| Option | Mechanism | Pros | Cons |
-|--------|-----------|------|------|
-| **A. Polkit / sudoers allowlist** (recommended) | NOPASSWD for specific commands | Auditable, least privilege | Careful sudoers design |
-| **B. Interactive sudo** | Human runs printed commands | Safest | Less agentic |
-| **C. Root agent** | Entire agent as root | Simple | **Rejected** as default |
+Each machine has its own credential repository. The agent must work correctly when cloned to many hosts without sharing secrets.
 
-Document in `docs/security.md`.
+#### Identity
+
+| Field | Source | Purpose |
+|-------|--------|---------|
+| `host_id` | `/etc/machine-id` (preferred) or stable hostname+product UUID | Partition secrets so a copied home dir does not reuse the wrong host’s material without explicit rebind |
+| `hostname` | `hostname -f` / `hostname` | Human-readable label in listings |
+| `username` | `$USER` / configured admin principal | Which account’s sudo password or key material |
+
+#### Storage location (local only — never in git)
+
+Recommended layout (XDG):
+
+```
+$XDG_DATA_HOME/linux-admin/          # default: ~/.local/share/linux-admin/
+  hosts/
+    <host_id>/
+      meta.json                      # non-secret: hostname, sudo_mode hint, timestamps
+      # secrets NOT in plain JSON when keyring available:
+  # OS keyring entries (preferred for secret material):
+  #   service: linux-admin
+  #   account: sudo:<host_id>:<username>
+  #   account: generic:<host_id>:<name>
+```
+
+Fallback when no keyring daemon is available (headless / minimal systems):
+
+```
+$XDG_DATA_HOME/linux-admin/hosts/<host_id>/secrets.age   # or .enc
+# encrypted at rest with a host unlock secret
+# unlock via: interactive passphrase once per session, or file mode 0600
+# only if user explicitly chose "file backend" at bootstrap
+```
+
+| Backend | When | Notes |
+|---------|------|-------|
+| **A. OS keyring** (libsecret / kwallet / Secret Service) | Desktop / user session with agent | Preferred; secrets never in world-readable files |
+| **B. Encrypted file store** | Headless servers, no keyring | age or similar; passphrase unlocked into an in-memory session cache |
+| **C. Metadata-only** | Host is NOPASSWD / polkit only | No password stored; `meta.json` records `sudo_mode: nopasswd` |
+
+**Hard rules**
+
+1. Credential store paths are **gitignored** and live outside the repo tree by default (`XDG_DATA_HOME`, not `./.linux-admin` in the project unless the operator opts in for a portable USB-style layout).
+2. **Never** commit `meta.json` with secrets, `.env` with passwords, or key material.
+3. Tool results and audit logs may include: host_id, username, credential *names*, backend type, last-used time, sudo mode. They must **never** include secret values, askpass output, or environment dumps that contain passwords.
+4. The LLM must not be given tools like `credentials_get_secret`. Only `credentials_status`, `credentials_set` (write-only path via local CLI), `credentials_delete`, `credentials_list` (names only).
+5. Offline: all backends are local; no vault cloud, no network secret managers in v1.
+
+#### Record types (v1)
+
+| Kind | Purpose | Secret? |
+|------|---------|---------|
+| `sudo_password` | Feed `SUDO_ASKPASS` when host requires a password | Yes (keyring / encrypted) |
+| `sudo_policy` | Hint: `auto` \| `nopasswd` \| `password` \| `tty` \| `manual` | No |
+| `sudoers_profile` | Optional label linking to `scripts/sudoers.example` variant | No |
+| `generic` (optional later) | Named local secrets for future host-local tools | Yes |
+| `ssh_key_path` (optional later) | Path to local key file for *this* host’s admin scripts | Path only; key stays on disk |
+
+v1 focus: **sudo + policy metadata**. Generic secrets are schema-ready but not required for MVP elevation.
+
+#### Operator UX
+
+```bash
+# CLI helpers (implemented in Phase 2/3)
+linux-admin creds init              # bind this machine-id, choose backend
+linux-admin creds set-sudo          # prompt on TTY; store in keyring/file; never argv
+linux-admin creds status            # mode, backend, whether password present (bool)
+linux-admin creds clear-sudo        # delete sudo secret for this host
+linux-admin creds doctor            # can we elevate? which mode?
+```
+
+`set-sudo` reads the password only from a **TTY or secure prompt** (or stdin when explicitly piped by the operator). It never accepts the password as a CLI flag (avoids shell history).
+
+#### Multi-host mental model
+
+- Laptop A and server B each run the agent with **their own** store under that host’s `host_id`.
+- Copying the git repo does **not** copy credentials.
+- Optional later: export/import of *encrypted* blobs for disaster recovery — not required for v1; if added, still offline and operator-driven.
+
+---
+
+### 6.2 Adaptive sudo runner (flexible elevation)
+
+Hosts differ. The runner **probes and adapts** instead of assuming one policy.
+
+#### Modes
+
+| Mode | Detection / selection | Behavior |
+|------|----------------------|----------|
+| **`cached`** | `sudo -n true` succeeds because timestamp is still valid | Run `sudo -n -- <cmd>` without touching the credential store |
+| **`nopasswd`** | `sudo -n true` succeeds even with empty timestamp (or policy hint + probe) | Same as cached; record hint `nopasswd` in meta for faster future path |
+| **`askpass`** | `sudo -n` fails; store has `sudo_password` for this host/user; non-interactive session OK | Set `SUDO_ASKPASS` to a **short-lived helper** that prints the password to stdout once; run `sudo -A -n -- <cmd>` (or `-A` without `-n` per sudo version); helper zeros memory after use |
+| **`tty`** | `sudo -n` fails; no stored password (or askpass disabled); controlling TTY available | Run `sudo -- <cmd>` attached to the operator TTY so the human types the password (agent does not see it) |
+| **`manual`** | No TTY, no stored password, `sudo -n` fails | Do **not** block forever. Return structured error: exact command for the operator to run; optional “retry after you `sudo -v`” |
+| **`denied`** | sudo returns auth failure / not in sudoers | Surface error; do not spin or spray password attempts |
+
+**Policy resolution order (default `sudo_policy: auto`):**
+
+```
+1. If command is not in elevate-allowlist → refuse (even if sudo would work)
+2. Probe: sudo -n true
+   ├─ success → mode=cached|nopasswd; run with sudo -n
+   └─ fail →
+        3. If meta.sudo_policy == manual → manual
+        4. If password in store and askpass enabled → askpass
+        5. Else if stdin is a TTY (or configured PTY) → tty
+        6. Else → manual (structured handoff)
+```
+
+Operators may **pin** a mode in `meta.json` / `sudo_policy` when auto-detection is wrong (e.g. force `manual` on a hardened host, force `askpass` for headless automation with a stored secret).
+
+#### Allowlist and argv shape
+
+```text
+sudo -n -- /usr/bin/systemctl restart nginx.service
+#          ^ absolute path preferred; no shell; no password on argv
+```
+
+- Always prefer `sudo --` + absolute binary path from the same allowlist as non-elevated exec.
+- Prefer `sudo -n` whenever possible so a hung password prompt cannot deadlock headless agents.
+- For askpass: only `sudo -A` (or equivalent); password goes through the askpass program, not `echo password | sudo -S` **unless** askpass is unavailable — and if `-S` is used as a last resort, stdin must be a pipe from the credential module, never logged, and never exposed to the LLM.
+
+#### Askpass helper design
+
+```
+linux-admin-askpass   # tiny binary/script
+  - reads secret from keyring/session cache (not from env var content in /proc if avoidable)
+  - prints password + newline to stdout once
+  - exits
+  - invoked only by sudo via SUDO_ASKPASS
+  - must not be a general “print any secret” tool callable by the model with arbitrary ids
+```
+
+Optional: session unlock — operator runs `linux-admin creds unlock` once; password sits in a **user-private memory or mode-0600 session socket** for N minutes, then expires. Reduces keyring prompts without leaving secrets in the model context.
+
+#### Interaction with Grok permissions
+
+Elevation is a **second gate** after tool approval:
+
+1. Human approves the mutating tool call in Grok (or policy allows read-only elevated probes if explicitly configured).
+2. Sudo runner selects mode and elevates.
+3. Audit line: `{tool, argv, sudo_mode, host_id, success, duration}` — no secrets.
+
+If mode is `manual`, the tool result tells the agent/operator what to run; the agent should **stop and wait** rather than invent alternate privilege escalation.
+
+#### What we deliberately support
+
+| Scenario | Supported? | How |
+|----------|------------|-----|
+| Desktop laptop, password sudo, interactive Grok | Yes | `tty` or `askpass` after `creds set-sudo` |
+| Server, NOPASSWD for allowlisted systemctl/apt | Yes | `nopasswd` / `cached` |
+| Server, password required, no TTY (headless agent) | Yes | stored password + `askpass`, or `manual` |
+| Valid sudo ticket from recent human `sudo -v` | Yes | `cached` via `sudo -n` |
+| Operator refuses to store passwords | Yes | `tty` or `manual` only; meta `sudo_policy: tty\|manual` |
+| Fully root-run agent | No (default) | Rejected; document break-glass only outside project defaults |
+
+#### Optional sudoers profiles (complementary, not exclusive)
+
+Storing a password is **not required** when NOPASSWD allowlists are acceptable:
+
+```
+# scripts/sudoers.example — install by hand after review
+# %linux-admin ALL=(root) NOPASSWD: /usr/bin/systemctl, /usr/bin/journalctl, ...
+```
+
+Hosts can mix: broad password sudo for rare actions, NOPASSWD for a small allowlist. The runner still probes with `sudo -n` first.
+
+---
+
+### 6.3 Implementation sketch (MCP + library)
+
+```
+mcp/linux_admin/src/linux_admin_mcp/
+  creds/
+    store.py          # backend interface: keyring | file | metadata-only
+    host_id.py        # machine-id binding
+    cli.py            # linux-admin creds …
+  elevate/
+    probe.py          # sudo -n true, detect mode
+    runner.py         # run allowlisted argv under chosen mode
+    askpass.py        # helper entrypoint
+  tools/
+    credentials.py    # list/status/delete metadata tools (no secret readback)
+    systemd.py        # uses elevate.runner when needed
+```
+
+Document full threat model and backend choice in `docs/security.md` and operator steps in `docs/credentials.md`.
 
 ---
 
@@ -374,17 +570,22 @@ linux-admin/
 │   ├── bootstrap.sh          # ONLINE: install deps, pull models, vendor MCP
 │   ├── doctor.sh             # basic health
 │   ├── doctor-offline.sh     # fail if egress required; simulate/check offline
-│   └── sudoers.example
+│   ├── linux-admin-askpass   # SUDO_ASKPASS helper (no secret in repo)
+│   └── sudoers.example       # optional NOPASSWD profiles
 ├── docs/
 │   ├── architecture.md
-│   ├── offline.md            # offline contract, test procedure
+│   ├── offline.md
+│   ├── credentials.md        # per-host store, backends, operator UX
 │   ├── mcp-servers.md
 │   ├── ollama-models.md
-│   └── security.md
+│   └── security.md           # threat model, sudo, audit
 └── tests/
     ├── mcp/
-    └── offline/              # tests that mock/block network
+    ├── elevate/              # mode matrix: nopasswd, askpass mock, manual
+    └── offline/
 ```
+
+**Not in git (runtime, per host):** `$XDG_DATA_HOME/linux-admin/hosts/<host_id>/` and OS keyring items.
 
 `vendor/` may be gitignored if bootstrap is mandatory on each machine; then lockfiles **must** be committed and bootstrap must be deterministic. Prefer documenting both: “bootstrap once online, then airplane mode forever.”
 
@@ -396,8 +597,9 @@ linux-admin/
 
 - [x] `PLAN.md`, `README.md`, `.gitignore`
 - [x] GitHub repo `krich11/linux-admin`
-- [ ] Offline constraint documented (this revision)
-- [ ] `docs/offline.md` outline in a follow-up PR
+- [x] Offline constraint documented
+- [x] Per-host credentials + adaptive sudo design (§6)
+- [ ] `docs/offline.md` / `docs/credentials.md` full operator docs in follow-up PRs
 
 ### Phase 1 — Local LLM + offline baseline MCP (1–2 days)
 
@@ -410,23 +612,26 @@ linux-admin/
 
 **Exit criteria:** Airplane-mode (or default route down) session can read allowlisted files and answer admin questions via Ollama; doctor-offline green.
 
-### Phase 2 — Custom `linux-admin-mcp` (3–5 days)
+### Phase 2 — Custom `linux-admin-mcp` + credential store + sudo runner (4–6 days)
 
 1. Read-only tools (systemd, journal, df, ss).
-2. Mutation tools + policy; no WAN tools.
-3. Skills: diagnose-service, boot-health, network-diagnose (local).
-4. Unit tests for allowlist + offline package tool behavior (graceful failure if apt cannot reach mirrors).
+2. **Credential repository:** host_id binding, keyring + encrypted-file backends, `linux-admin creds` CLI.
+3. **Adaptive sudo runner:** probe order, modes `cached` / `nopasswd` / `askpass` / `tty` / `manual`, askpass helper.
+4. Mutation tools call elevate.runner; policy + confirm gates; no WAN tools.
+5. Skills: diagnose-service, boot-health, network-diagnose (local).
+6. Unit tests: allowlist, offline apt behavior, **elevation mode matrix** (mock sudo), assert secrets never appear in tool JSON.
 
-**Exit criteria:** Full local service diagnosis offline; restart only after approval.
+**Exit criteria:** Offline diagnosis; restart works on both a NOPASSWD-style path and a password path (askpass or tty); `creds status` / `creds doctor` accurate; no password in logs.
 
 ### Phase 3 — Packages, hardening, polish (2–4 days)
 
-1. Apt/dpkg tools with clear offline semantics.
+1. Apt/dpkg tools with clear offline semantics (elevated as needed).
 2. package-update / disk-pressure skills.
 3. Optional local Docker socket MCP (no pulls).
 4. Headless read-only health report (cron-friendly, offline).
+5. Session unlock TTL for stored sudo secret; audit fields for sudo_mode.
 
-**Exit criteria:** Health report and dry-run package plan from local state without internet.
+**Exit criteria:** Health report and dry-run package plan from local state without internet; headless elevate via askpass when configured, or clean `manual` handoff when not.
 
 ### Phase 4 — Hardening & ops (ongoing)
 
@@ -444,9 +649,11 @@ linux-admin/
 | Doctor | Ollama up, models on disk, MCP entrypoints exist and start |
 | Doctor-offline | Drop default route or use network namespace; full smoke prompt; no process should need WAN |
 | MCP unit | Allowlist rejects `bash -c`, `curl`, `docker pull`; caps output |
-| Integration | Diagnose failed unit, list listeners, apt simulate from local cache |
-| Regression | Golden tool-call transcripts |
-| Safety | Writes outside allowlist fail; no network tools registered |
+| Elevate unit | Mode matrix with fake `sudo`; askpass never logs secret; `manual` returns structured error |
+| Creds unit | host_id isolation; list/status never returns secret bytes; file backend 0600 |
+| Integration | Diagnose failed unit; elevate restart on password and NOPASSWD fixtures |
+| Regression | Golden tool-call transcripts (redact any credential fields) |
+| Safety | Writes outside allowlist fail; no network tools; no secret in audit JSON |
 
 **Offline test recipe (document in `docs/offline.md`):**
 
@@ -467,7 +674,11 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 | Grok CLI requires cloud auth to start | Blocks offline use | Phase 1 spike; local-only config; alternate harness only if proven necessary |
 | Local model weak at tool calling | Bad admin actions | Coder-tuned models; short schemas; golden tests |
 | Unbounded journal reads | Context blowup | Caps, since filters |
-| Privilege escalation | Host compromise | No raw shell; sudoers allowlist; human approval |
+| Privilege escalation | Host compromise | No raw shell; sudo allowlist; human tool approval; least-privilege sudoers optional |
+| Credential theft from disk | Password leak | Keyring preferred; encrypted file; 0600; never git; never model context |
+| Password in LLM logs | Secret exfil via sessions | No secret tool readback; redact audit; askpass isolated |
+| Wrong sudo mode (hang on password) | Stuck headless agent | Prefer `sudo -n`; fail to `manual` instead of indefinite prompt |
+| Host A creds used on host B | Cross-machine misuse | Bind store to `machine-id`; refuse mismatch without re-init |
 | `/etc` corruption | Outage | Staging, diffs, drop-ins |
 | Ollama down | Agent unusable | Doctor; **no cloud fallback** (fail closed, fix local) |
 | `npx -y` / uvx at runtime | Offline failure + supply chain | Vendor + lockfiles; offline doctor asserts no registry access |
@@ -479,11 +690,13 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 ## 11. Open decisions (Phase 1–2)
 
 1. **Default Ollama model** after benchmarking on `phoenix`.
-2. **Sudo strategy** A vs B (§6).
-3. **`/etc` writes** via filesystem MCP vs apply-only tools.
-4. **Vendor strategy:** commit `vendor/` vs bootstrap-only with lockfiles.
-5. **Python vs Node** for `linux-admin-mcp` (recommend **Python + uv**).
-6. **Grok offline auth:** confirm whether a live xAI session is required when using only custom Ollama models; document result in `docs/offline.md`.
+2. **Default credential backend:** keyring-first with file fallback, or file-only on servers? (Recommend keyring-first, auto-fallback.)
+3. **Default `sudo_policy`:** `auto` (recommend) vs require explicit pin per host.
+4. **Whether headless sessions may use stored sudo passwords** by default, or require an explicit `creds allow-askpass` flag (recommend explicit opt-in for askpass automation).
+5. **`/etc` writes** via filesystem MCP vs apply-only tools.
+6. **Vendor strategy:** commit `vendor/` vs bootstrap-only with lockfiles.
+7. **Python vs Node** for `linux-admin-mcp` (recommend **Python + uv**).
+8. **Grok offline auth:** confirm whether a live xAI session is required when using only custom Ollama models; document result in `docs/offline.md`.
 
 ---
 
@@ -495,6 +708,8 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 - Zero unapproved host mutations in interactive mode.
 - P95 Ollama tool-loop latency acceptable interactively (target &lt; 15s/step on chosen model).
 - All custom MCP tools covered by allowlist unit tests including “no WAN binaries.”
+- Elevation succeeds on at least two fixtures: **NOPASSWD** and **password** (askpass or tty).
+- Credential status/list APIs never return secret material in automated tests.
 
 ---
 
@@ -505,6 +720,7 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 3. Vendor filesystem MCP; smoke test offline.
 4. Scaffold `linux-admin-mcp` with `service_status` vertical slice.
 5. Spike: Grok + Ollama with network disabled; record any cloud dependency.
+6. Design spike: `creds` CLI + sudo probe on this host (password vs `-n`); document observed mode in `docs/credentials.md`.
 
 ---
 
@@ -521,6 +737,9 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 | Knowledge | In-repo skills + local man/docs | No web dependency |
 | Mutations | Double-gated | High blast radius |
 | Raw shell MCP | Not in v1 | Injection / safety |
+| Credentials | Per-host store under XDG / keyring | Offline; not in git; bound to machine-id |
+| Sudo | Adaptive multi-mode runner | Password, NOPASSWD, cache, TTY, manual handoff |
+| Secrets to LLM | Never | Status/metadata only; askpass outside model |
 
 ---
 
@@ -528,12 +747,13 @@ grok -m ollama-admin -p "List failed systemd units and free disk space"
 
 | PR | Title | Scope | Depends on |
 |----|-------|-------|------------|
-| **PR0** | docs: plan + offline constraint | `PLAN.md`, `README.md`, `.gitignore` | — |
+| **PR0** | docs: plan + offline + credentials/sudo design | `PLAN.md`, `README.md`, `.gitignore` | — |
 | **PR1** | feat: Ollama-only Grok config + offline doctor | `.grok/config.toml`, `docs/offline.md`, `docs/ollama-models.md`, `scripts/doctor*.sh` | PR0, Ollama + models on disk |
 | **PR2** | feat: vendored baseline MCP (no npx -y) | `vendor/` or bootstrap, `AGENTS.md`, `scripts/bootstrap.sh` | PR1 |
 | **PR3** | feat: linux-admin-mcp read-only slice | `mcp/linux_admin/**`, tests | PR2 |
-| **PR4** | feat: mutations + sudoers + core skills | skills/, policy, `docs/security.md` | PR3 |
-| **PR5** | feat: package/disk skills + offline apt semantics | skills, package tools | PR4 |
-| **PR6** | feat: headless read-only health report | scripts, docs | PR4 |
+| **PR4** | feat: per-host credential repository | `creds/*`, CLI, keyring/file backends, `docs/credentials.md` | PR3 |
+| **PR5** | feat: adaptive sudo runner + askpass + mutation tools | `elevate/*`, sudoers.example, skills, `docs/security.md` | PR4 |
+| **PR6** | feat: package/disk skills + offline apt semantics | skills, package tools | PR5 |
+| **PR7** | feat: headless read-only health report | scripts, docs | PR5 |
 
-Each PR must preserve the offline contract: CI or `doctor-offline` steps should fail if a change reintroduces runtime registry/cloud dependency.
+Each PR must preserve the offline contract and the credential contract: no secrets in git, no secret echo in tool results, doctor-offline still green.

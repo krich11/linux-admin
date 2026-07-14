@@ -4,6 +4,14 @@ staging/
 logs/
 *.audit.jsonl
 
+# Credential material must never be committed (use XDG path in production;
+# these patterns catch accidental in-repo copies)
+**/hosts/*/secrets*
+**/hosts/*/meta.local.json
+*.age
+creds.local/
+askpass.env
+
 # Python
 __pycache__/
 *.py[cod]

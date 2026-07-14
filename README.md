@@ -5,6 +5,8 @@
 - **Grok CLI** as the agent host (tools, permissions, sessions, ACP)
 - **Ollama only** for LLM inference (`http://127.0.0.1:11434/v1`)
 - **Local MCP servers** launched from vendored / lockfile-installed binaries on disk
+- **Per-host credential repository** (OS keyring or encrypted local store — never git)
+- **Adaptive sudo** for hosts that need a password, NOPASSWD, a cached ticket, a TTY prompt, or a manual handoff
 
 ## Offline requirement
 
@@ -12,7 +14,7 @@ This project must run at **full capacity with no internet**. Software may be dow
 
 There is **no cloud LLM fallback** in the project profile.
 
-Details: **[PLAN.md](./PLAN.md)** (§1.1 Offline-first constraint).
+Details: **[PLAN.md](./PLAN.md)** (§1.1 Offline-first constraint, §6 credentials & sudo).
 
 ## Status
 
@@ -23,9 +25,12 @@ Planning. Architecture, MCP inventory, offline contract, and PR breakdown are in
 ```
 You → Grok (this repo) → Ollama (loopback, local weights)
                        → MCP (stdio, vendored entrypoints)
+                       → credential store (per machine-id, local only)
+                       → sudo runner (nopasswd | askpass | tty | manual)
                        → Ubuntu host (inspect → plan → apply → verify)
 
 No required path: public internet, cloud APIs, npx -y, live registries
+Secrets never go to the LLM or to git
 ```
 
 ## Prerequisites (high level)
