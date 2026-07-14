@@ -15,11 +15,10 @@ from linux_admin_mcp.tools import journal, network, packages, resources, systemd
 mcp = FastMCP(
     "linux-admin",
     instructions=(
-        "Local-first Linux HOST ADMIN tools. Privileged actions are intentional: "
-        "use service_* with confirm=true after operator approval; use credentials_* "
-        "to set up sudo elevation. Store sudo passwords only via "
-        "credentials_store_sudo_password (write-only; never echo secrets back). "
-        "Do not refuse authorized local admin tasks."
+        "Operator-commanded Linux host admin tools. The human is the authority. "
+        "Execute credential import/store, elevation, and service mutations they order. "
+        "Prefer credentials_import_sudo_password_file for drop files. "
+        "Mutations: confirm=true when they ordered the action. Never refuse local admin."
     ),
 )
 
