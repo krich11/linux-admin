@@ -1,56 +1,40 @@
 # linux-admin
 
-**Local-first** Linux administration agent with a **Grok-style CLI**.
+**Host administration agent** with a Grok-style TUI — **not** a generic coding session.
 
-- **UI:** `linux-admin` → Grok TUI (scrollback, prompt, tools, approvals)
-- **LLM:** LAN Ollama `192.168.200.120` (primary, `qwen2.5-coder:7b`) + **local** `127.0.0.1` fallback (`llama3.2:3b`) when LAN is down
-- **Tools:** `linux-admin-mcp` (systemd, journal, disk, network, packages, …)
-- **Creds / sudo:** per-host store + adaptive elevation (NOPASSWD, askpass, TTY, manual)
-- **Offline core path:** full local admin without WAN; optional online helpers must not block
+| Layer | What |
+|-------|------|
+| **Entry** | `linux-admin` → Grok with **admin agent + system prompt**, Ollama model, MCP |
+| **LLM** | LAN Ollama (`ollama-admin`, T4-picked e.g. `qwen2.5:14b`) + local `ollama-local` |
+| **Tools** | `linux-admin-mcp` (systemd, journal, disk, network, packages, creds) |
+| **Identity** | `.grok/agents/linux-admin.md` + `linux-admin.system.md` |
 
 ## Quick start
 
 ```bash
-# once (needs network for install/pull)
 ./scripts/bootstrap.sh
-
-# interactive Grok-style session
-linux-admin
-
-# headless
-linux-admin -p "List failed systemd units and free disk space"
-
-# health
+linux-admin                          # admin TUI (banner + ollama model)
+linux-admin -p "list failed units"
 linux-admin doctor
-linux-admin doctor-offline
-
-# keep local break-glass model ready
-linux-admin ensure-local
-
-# credentials (never pass passwords on argv)
-linux-admin creds init
-linux-admin creds set-sudo
-linux-admin creds set-policy --allow-askpass
-linux-admin creds doctor
+linux-admin ensure-local            # break-glass local model
 ```
 
-Interactive sessions use **Grok’s last-used model** (or `/model`). Bootstrap picks the best T4-friendly LAN weights for `ollama-admin`. Force with `LINUX_ADMIN_MODEL=…` only when needed.
+On launch you should see a **linux-admin banner** (host, model, LAN/local URLs) and the session should identify as host admin, not a coding project.
+
+Switch models in TUI: `/model ollama-admin` · `ollama-local` · `ollama-fast`
 
 ## Layout
 
 | Path | Purpose |
 |------|---------|
-| `scripts/linux-admin` | Primary CLI entry |
-| `.grok/config.toml` | Ollama models + MCP wiring |
-| `AGENTS.md` | Agent operating rules |
-| `mcp/linux_admin/` | Custom MCP server + elevate/creds |
-| `skills/` | Local admin runbooks |
-| `docs/` | Offline, credentials, security, models |
-| `PLAN.md` | Full design |
-
-## Offline contract
-
-See [docs/offline.md](./docs/offline.md). Core path must work with no internet after bootstrap. Search/CVE/etc. may be unavailable and must fail soft.
+| `scripts/linux-admin` | Product entry |
+| `.grok/agents/linux-admin.md` | Agent definition |
+| `.grok/agents/linux-admin.system.md` | System prompt override (identity) |
+| `AGENTS.md` | Project rules |
+| `mcp/linux_admin/` | MCP server |
+| `config/ollama.env` | LAN + local Ollama endpoints |
+| `skills/` | Admin runbooks |
+| `docs/` | Offline, credentials, models |
 
 ## License
 

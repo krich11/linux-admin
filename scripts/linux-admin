@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# Primary CLI entry: Grok-style TUI pre-wired for this repo.
-#
-# Model selection: Grok remembers the last-used model across sessions.
-# We do NOT pass -m on every interactive launch (that would override /model).
-# Only force a model when LINUX_ADMIN_MODEL is set.
+# linux-admin product entry — admin agent, not generic Grok coding session.
 set -euo pipefail
 
-# Resolve symlinks so ROOT is the real repo even when invoked as
-# ~/.local/bin/linux-admin → …/src/linux-admin/scripts/linux-admin
 _source="${BASH_SOURCE[0]}"
 while [[ -L "$_source" ]]; do
   _dir="$(cd -P "$(dirname "$_source")" && pwd)"
@@ -21,114 +15,120 @@ export PATH="${ROOT}/mcp/linux_admin/.venv/bin:${HOME}/.local/bin:${PATH}"
 # shellcheck source=/dev/null
 source "$ROOT/scripts/lib-env.sh"
 
-# Register model endpoints in user config if missing (does not force -m).
+AGENT_DEF="${ROOT}/.grok/agents/linux-admin.md"
+SYSTEM_PROMPT_FILE="${ROOT}/.grok/agents/linux-admin.system.md"
+RULES_FILE="${ROOT}/AGENTS.md"
+
 if [[ -x "$ROOT/scripts/install-user-models.sh" ]]; then
   "$ROOT/scripts/install-user-models.sh" >/dev/null 2>&1 || true
+fi
+if [[ -x "$ROOT/scripts/register-user-mcp.sh" ]]; then
+  "$ROOT/scripts/register-user-mcp.sh" >/dev/null 2>&1 || true
 fi
 
 usage() {
   cat <<EOF
-linux-admin — local Linux admin agent (Grok-style CLI)
+linux-admin — Linux host administration agent (Grok-style TUI)
+
+Product launch (not plain grok):
+  • agent definition + rules (admin identity)
+  • model: ollama-admin (LAN) or ollama-local if LAN down
+  • MCP: linux-admin tools
+  • banner shows host + selected model
 
 Usage:
-  linux-admin                 Interactive TUI (Grok last-used / config default)
-  linux-admin -p "prompt"     Headless one-shot
-  linux-admin creds ...       Credential repository CLI
-  linux-admin doctor          Health checks
-  linux-admin doctor-offline  Core-path checks
-  linux-admin bootstrap       Deps + pick best T4 model on LAN + local fallback
-  linux-admin ensure-local    Local break-glass model only
-  linux-admin pick-model      Print best LAN model for T4 (no config write)
-  linux-admin mcp             MCP stdio server
-  linux-admin help
+  linux-admin                 Interactive admin TUI
+  linux-admin -p "…"          Headless
+  linux-admin doctor|bootstrap|ensure-local|creds|pick-model|mcp|help
 
-Models (switch anytime in TUI with /model or Ctrl+M):
-  ollama-admin   LAN primary  (${OLLAMA_BASE_URL})
+Models (/model still works):
+  ollama-admin   ${OLLAMA_BASE_URL} (${OLLAMA_ADMIN_MODEL})
   ollama-fast    LAN small
-  ollama-local   this host    (${OLLAMA_LOCAL_BASE_URL} / ${OLLAMA_LOCAL_MODEL})
+  ollama-local   ${OLLAMA_LOCAL_BASE_URL} (${OLLAMA_LOCAL_MODEL})
 
-Force a model for one launch:
-  LINUX_ADMIN_MODEL=ollama-local linux-admin
-  LINUX_ADMIN_MODEL=ollama-admin linux-admin -p "…"
-
-Config: config/ollama.env
+Force: LINUX_ADMIN_MODEL=ollama-local linux-admin
 EOF
 }
 
-# Optional -m only if user forced LINUX_ADMIN_MODEL
-grok_model_args() {
+select_session_model() {
   if [[ -n "${LINUX_ADMIN_MODEL:-}" ]]; then
-    printf '%s\0' -m "$LINUX_ADMIN_MODEL"
+    printf '%s\n' "$LINUX_ADMIN_MODEL"
+    return 0
   fi
+  select_grok_model 2>/dev/null || printf 'ollama-local\n'
 }
 
-# Headless: if no force, prefer primary when up else local
-headless_model_args() {
-  if [[ -n "${LINUX_ADMIN_MODEL:-}" ]]; then
-    printf '%s\0' -m "$LINUX_ADMIN_MODEL"
-    return
-  fi
-  local sel
-  sel="$(select_grok_model 2>/dev/null || true)"
-  if [[ -n "$sel" ]]; then
-    printf '%s\0' -m "$sel"
-  fi
+print_banner() {
+  local model="$1"
+  local host
+  host="$(hostname -f 2>/dev/null || hostname 2>/dev/null || echo host)"
+  cat >&2 <<EOF
+
+┌─────────────────────────────────────────────────────────────┐
+│  linux-admin          host: ${host}
+│  model: ${model}
+│  LAN:   ${OLLAMA_BASE_URL}  (${OLLAMA_ADMIN_MODEL})
+│  Local: ${OLLAMA_LOCAL_BASE_URL}  (${OLLAMA_LOCAL_MODEL})
+│  Host admin agent — not a coding project session
+│  /model ollama-admin | ollama-fast | ollama-local
+└─────────────────────────────────────────────────────────────┘
+
+EOF
 }
 
-# --trust: allow repo-local MCP servers (project .grok/config.toml)
-run_grok() {
-  # "$@" are extra grok args; model flags may be empty
-  local -a args=(--trust --disable-web-search)
-  local -a model_args=()
-  if [[ "${1:-}" == "--headless-model" ]]; then
-    shift
-    while IFS= read -r -d '' a; do model_args+=("$a"); done < <(headless_model_args)
-  else
-    while IFS= read -r -d '' a; do model_args+=("$a"); done < <(grok_model_args)
+build_rules() {
+  # Combine system identity + AGENTS.md into --rules (works reliably with Ollama)
+  {
+    cat "$SYSTEM_PROMPT_FILE"
+    echo
+    echo "---- project AGENTS.md ----"
+    cat "$RULES_FILE"
+  }
+}
+
+run_admin_grok() {
+  local model
+  model="$(select_session_model)"
+  print_banner "$model"
+
+  if [[ ! -f "$AGENT_DEF" || ! -f "$SYSTEM_PROMPT_FILE" ]]; then
+    echo "error: missing agent files under .grok/agents/" >&2
+    exit 1
   fi
-  exec grok "${model_args[@]}" "${args[@]}" "$@"
+
+  local rules
+  rules="$(build_rules)"
+
+  exec grok \
+    --trust \
+    --disable-web-search \
+    --cwd "$ROOT" \
+    --agent "$AGENT_DEF" \
+    --rules "$rules" \
+    -m "$model" \
+    "$@"
 }
 
 cmd="${1:-}"
 case "$cmd" in
-  help|-h|--help)
-    usage
-    ;;
-  creds)
-    shift
-    exec linux-admin-creds "$@"
-    ;;
-  doctor)
-    exec "$ROOT/scripts/doctor.sh"
-    ;;
-  doctor-offline)
-    exec "$ROOT/scripts/doctor-offline.sh"
-    ;;
-  bootstrap)
-    exec "$ROOT/scripts/bootstrap.sh" "${@:2}"
-    ;;
-  ensure-local)
-    exec "$ROOT/scripts/ensure-local-model.sh"
-    ;;
-  pick-model)
-    exec python3 "$ROOT/scripts/pick-admin-model.py" "$OLLAMA_BASE_URL" --rank
-    ;;
-  mcp)
-    exec linux-admin-mcp
-    ;;
+  help|-h|--help) usage ;;
+  creds) shift; exec linux-admin-creds "$@" ;;
+  doctor) exec "$ROOT/scripts/doctor.sh" ;;
+  doctor-offline) exec "$ROOT/scripts/doctor-offline.sh" ;;
+  bootstrap) exec "$ROOT/scripts/bootstrap.sh" "${@:2}" ;;
+  ensure-local) exec "$ROOT/scripts/ensure-local-model.sh" ;;
+  pick-model) exec python3 "$ROOT/scripts/pick-admin-model.py" "$OLLAMA_BASE_URL" --rank ;;
+  mcp) exec linux-admin-mcp ;;
   -p|--print|headless)
     shift
-    if [[ $# -eq 0 ]]; then
-      echo "usage: linux-admin -p \"prompt\"" >&2
-      exit 2
-    fi
-    prompt="$*"
-    run_grok --headless-model -p "$prompt"
+    [[ $# -gt 0 ]] || { echo "usage: linux-admin -p \"prompt\"" >&2; exit 2; }
+    run_admin_grok -p "$*"
     ;;
   "")
-    run_grok
+    run_admin_grok \
+      "Start of session: introduce yourself as linux-admin for this host in 3-5 short lines, list ops you can do (services, boot, disk, network, packages), and ask what to check. Do not describe yourself as Qwen, a general AI, or a coding assistant."
     ;;
   *)
-    run_grok "$@"
+    run_admin_grok "$@"
     ;;
 esac

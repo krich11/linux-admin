@@ -41,6 +41,9 @@ fi
 # Pick best T4-friendly model on LAN, register Grok endpoints, set session default once
 "$ROOT/scripts/install-user-models.sh" --pick --set-default
 
+# User-scoped MCP so admin tools always load
+"$ROOT/scripts/register-user-mcp.sh" || true
+
 # Break-glass local model (small) so admin works if LAN Ollama is down
 "$ROOT/scripts/ensure-local-model.sh" || echo "WARNING: local fallback not ready — run later: linux-admin ensure-local"
 
